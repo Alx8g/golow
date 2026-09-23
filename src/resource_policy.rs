@@ -7,6 +7,14 @@ pub enum BlockedResource {
     Advertising,
 }
 
+pub const OPTIONAL_BOOTSTRAPS: &[(&str, &str)] = &[
+    ("htlbid.com", "/v3/soundcloud.com/htlbid.js"),
+    ("securepubads.g.doubleclick.net", "/tag/js/gpt.js"),
+    ("c.amazon-adsystem.com", "/aax2/apstag.js"),
+    ("connect.facebook.net", "/en_US/fbevents.js"),
+    ("analytics.tiktok.com", "/i18n/pixel/events.js"),
+];
+
 // Exact resources observed in the live profile. Never block SoundCloud's media,
 // consent UI, OAuth, fraud prevention, or the standby player frame.
 pub fn blocked_resource(raw: &str, document: bool, prefs: &Settings) -> Option<BlockedResource> {
@@ -28,7 +36,8 @@ pub fn blocked_resource(raw: &str, document: bool, prefs: &Settings) -> Option<B
     }
     if prefs.efficiency
         && ((host == "www.redditstatic.com" && url.path() == "/ads/pixel.js")
-            || (host == "cm.g.doubleclick.net" && url.path() == "/partnerpixels"))
+            || (host == "cm.g.doubleclick.net" && url.path() == "/partnerpixels")
+            || OPTIONAL_BOOTSTRAPS.contains(&(host, url.path())))
     {
         return Some(BlockedResource::Advertising);
     }
@@ -60,6 +69,53 @@ mod tests {
                 &prefs
             ),
             Some(BlockedResource::Advertising)
+        );
+    }
+    #[test]
+    fn bootstrap_filters_are_exact_and_can_be_disabled() {
+        for (host, path) in OPTIONAL_BOOTSTRAPS {
+            let raw = format!("https://{host}{path}?cache=test");
+            assert_eq!(
+                blocked_resource(&raw, false, &Settings::default()),
+                Some(BlockedResource::Advertising)
+            );
+            let off = Settings {
+                efficiency: false,
+                ..Settings::default()
+            };
+            assert_eq!(blocked_resource(&raw, false, &off), None);
+            assert_eq!(
+                blocked_resource(
+                    &format!("https://{host}.invalid{path}"),
+                    false,
+                    &Settings::default()
+                ),
+                None
+            );
+            assert_eq!(
+                blocked_resource(
+                    &format!("https://{host}{path}-other"),
+                    false,
+                    &Settings::default()
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            blocked_resource(
+                "https://connect.facebook.net/en_US/sdk.js",
+                false,
+                &Settings::default()
+            ),
+            None
+        );
+        assert_eq!(
+            blocked_resource(
+                "https://www.facebook.com/dialog/oauth",
+                true,
+                &Settings::default()
+            ),
+            None
         );
     }
     #[test]

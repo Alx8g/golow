@@ -1,5 +1,5 @@
 use crate::{
-    resource_policy::{blocked_resource, BlockedResource},
+    resource_policy::{blocked_resource, BlockedResource, OPTIONAL_BOOTSTRAPS},
     settings::Settings,
 };
 use std::{
@@ -116,6 +116,13 @@ impl ResourceFilter {
                 modern.AddWebResourceRequestedFilterWithRequestSourceKinds(
                     &HSTRING::from(pattern),
                     context,
+                    COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+                )?;
+            }
+            for (host, path) in OPTIONAL_BOOTSTRAPS {
+                modern.AddWebResourceRequestedFilterWithRequestSourceKinds(
+                    &HSTRING::from(format!("https://{host}{path}*")),
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
                     COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
                 )?;
             }
