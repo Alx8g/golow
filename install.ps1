@@ -27,10 +27,27 @@ New-Item -ItemType Directory -Path $backupDir | Out-Null
 $staged = Join-Path $backupDir 'new-build.exe'
 Copy-Item -LiteralPath $BuildPath -Destination $staged
 if ((Get-FileHash -LiteralPath $staged).Hash -ne $sourceHash) { throw 'Staged build hash mismatch.' }
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class SoundCloudInstallerWindow {
+    public delegate bool EnumProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr p);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    public static bool Close(uint pid) {
+        IntPtr found=IntPtr.Zero;
+        EnumWindows((h,p)=>{uint owner;GetWindowThreadProcessId(h,out owner);if(owner==pid){var name=new StringBuilder(128);GetClassName(h,name,128);if(name.ToString()=="Window Class"){found=h;return false;}}return true;},IntPtr.Zero);
+        return found!=IntPtr.Zero && PostMessage(found,0x0010,IntPtr.Zero,IntPtr.Zero);
+    }
+}
+'@
 $running = @(Get-Process -Name 'soundcloud-go-client' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exePath })
 $wasRunning = $running.Count -gt 0
 foreach ($process in $running) {
-    if (-not $process.CloseMainWindow()) { throw 'Could not request a graceful close. Close the app and retry.' }
+    if (-not [SoundCloudInstallerWindow]::Close($process.Id)) { throw 'Could not request a graceful close. Close the app and retry.' }
     if (-not $process.WaitForExit(15000)) { throw 'App did not close within 15 seconds. It was not force-killed.' }
 }
 $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SoundCloudGoPlus'
