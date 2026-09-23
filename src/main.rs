@@ -321,10 +321,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => {}
         }
-        if exit || deferred.take_if_due(Instant::now()) {
-            if win_state.valid() {
-                if let Err(error) = settings::write_json(&dir.join("window.json"), &win_state) { log(&dir, started, &format!("window_save_failed {error}")); }
-            }
+        if (exit || deferred.take_if_due(Instant::now())) && win_state.valid() {
+            if let Err(error) = settings::write_json(&dir.join("window.json"), &win_state) { log(&dir, started, &format!("window_save_failed {error}")); }
         }
         *control_flow = if exit { ControlFlow::Exit }
             else if let Some(deadline) = deferred.deadline() { ControlFlow::WaitUntil(deadline) }
