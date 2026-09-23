@@ -14,7 +14,10 @@ html = '''<html><head><title>SoundCloud cleanup fixture</title></head><body>
 <div class="cookieBanner" id="consent">Choose cookies <button>Accept</button></div>
 <div class="playControls" id="player"><button aria-label="Pause">Pause</button></div>
 <div class="track" id="track">A song about promotions <button>Like</button></div>
-<a href="/go" id="upsell-link">Go+</a><div id="dynamic"></div></div>
+<a href="/go" id="upsell-link">Go+</a>
+<aside class="streamSidebar"><div class="homeCreditTracker" id="artist-tools"><div class="sidebarModule"><iframe title="Artist Tools" srcdoc="Artist Tools Amplify Replace Distribute Master Unlock Artist tools from NZ$4.25/month"></iframe></div></div>
+<article class="artistShortcutsModule" id="new-tracks"><h4>New tracks</h4><button aria-label="Play new track">Play</button></article></aside>
+<div id="dynamic"></div></div>
 </body></html>'''
 result = cdp('Target.createTarget', url='about:blank')
 target_id = result['targetId']
@@ -36,17 +39,18 @@ try:
       const hidden=id=>document.getElementById(id).hasAttribute('data-sc-client-hidden');
       await wait(200);
       assert(hidden('promo')&&hidden('upsell-link'),'Explicit promos hidden');
-      for(const id of ['ordinary','protected','consent','player','track'])assert(!hidden(id),'Protected content: '+id);
+      for(const id of ['ordinary','protected','consent','player','track','new-tracks'])assert(!hidden(id),'Protected content: '+id);
+      assert(hidden('artist-tools'),'Artist Tools iframe host hidden without touching New Tracks');
       const initial=window.__scClient.diagnostics();
       await wait(3200);
       assert(window.__scClient.diagnostics().scans===initial.scans,'No idle polling scans');
       document.getElementById('dynamic').innerHTML='<div class="upsellBanner" id="new-promo">New upsell</div>';
       await wait(250); assert(hidden('new-promo'),'New subtree cleaned');
       window.__scClient.update({cleanup:false});
-      assert(!hidden('promo')&&!hidden('new-promo'),'Toggle restores existing content');
+      assert(!hidden('promo')&&!hidden('new-promo')&&!hidden('artist-tools'),'Toggle restores existing content');
       assert(!window.__scClient.diagnostics().observer_active,'Disabled cleanup disconnects observer');
       window.__scClient.update({cleanup:true});
-      assert(hidden('promo'),'Re-enable cleanup');
+      assert(hidden('promo')&&hidden('artist-tools')&&!hidden('new-tracks'),'Re-enable cleanup preserves New Tracks');
       window.__scClient.setNativeHidden(true);
       const background=window.__scClient.diagnostics();
       assert(!background.observer_active&&!background.timer_active,'Background has no timer or observer');
@@ -66,7 +70,7 @@ try:
       await wait(250);
       const final=window.__scClient.diagnostics();
       assert(!final.timer_active,'Mutation batch drains');
-      return {passed:true,tests:14,initial,background,final};
+      return {passed:true,tests:15,initial,background,final};
     })()''', True)
     output = root / '.working' / 'verification' / 'cleanup-browser.json'
     output.parent.mkdir(parents=True, exist_ok=True)

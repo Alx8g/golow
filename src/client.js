@@ -10,11 +10,14 @@
     '.upsellBanner', '.premiumUpsell', '.mobileAppsButtons', '.appBanner',
     '[data-testid="promoted-track"]', '[data-testid="upsell-banner"]',
     '[data-testid="artist-pro-banner"]', '.artistProBanner', '.artistUpsell',
+    '.homeCreditTracker',
     '.announcementBanner', '.announcementBanner__content',
     'a[href="/go"]', 'a[href="/pro"]', 'a[href^="/go?"]', 'a[href^="/pro?"]',
     'a[href^="https://artists.soundcloud.com"]'
   ].join(',');
-  const explicitPromo = /^(?:upsellBanner|premiumUpsell|mobileAppsButtons|appBanner|artistProBanner|artistUpsell)$/;
+  // Artist Tools is an embedded iframe inside homeCreditTracker. Hide its exact
+  // host module, not artistShortcutsModule, which contains the user's New Tracks.
+  const explicitPromo = /^(?:upsellBanner|premiumUpsell|mobileAppsButtons|appBanner|artistProBanner|artistUpsell|homeCreditTracker)$/;
   const protectedSelector = 'audio,video,input,form,[role="dialog"],.playControls,button[aria-label*="Play"],button[aria-label*="Pause"]';
   const hidden = new Set();
   const pending = new Set();
