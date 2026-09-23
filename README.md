@@ -13,7 +13,8 @@ Browser regression checks use an isolated synthetic fixture through `cloak-brows
 ## Behavior
 
 - Standard WebView2 background throttling and hardware acceleration stay enabled.
-- Minimized windows request a low memory target, hide the WebView controller and disconnect cleanup work. The renderer is not suspended, so audio remains eligible to play.
+- Before the first navigation, narrow native filters return empty responses for the hidden Artist Tools embed and two advertising resources observed in profiling. Exact host/path checks preserve audio/CDN traffic, consent, OAuth, security scripts and the standby player. Cleanup and efficiency toggles control these filters. Reload applies request-filter changes to already loaded pages.
+- Minimized windows request a low memory target, hide the WebView controller and disconnect cleanup work. The renderer is not suspended, so audio remains eligible to play. Visible cleanup ignores player/waveform mutations and added subtrees without matching promotions.
 - Cleanup runs once on load and then only on added subtrees. It has no periodic sweep, text-tree walk, broad promo substring selector, geometry scan or automatic dismissal click. The exact Artist Tools iframe host is hidden, while the separate New Tracks module remains visible.
 - App settings control cleanup, minimized memory reduction, compact mode and always-on-top. `Ctrl+,` opens settings. The audio-quality link goes to SoundCloud's own streaming settings. Selecting Go+ is not proof that high-quality playback is enabled.
 - Exact parsed HTTPS hosts are checked for top-level navigation and managed login popups. Popup redirects are checked too. Native messages are limited to settings and cache status from SoundCloud's UI origin.

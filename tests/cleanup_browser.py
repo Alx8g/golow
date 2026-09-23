@@ -66,11 +66,15 @@ try:
       window.__scClient.status({cache_mib:400,low_memory:false});
       assert(shadow.getElementById('status').textContent.includes('400.0'),'Status rendered as text');
       shadow.getElementById('close').click();assert(shadow.getElementById('panel').hidden,'Settings closes');
+      const beforeIrrelevant=window.__scClient.diagnostics().scans;
       for(let i=0;i<100;i++)document.getElementById('dynamic').appendChild(document.createElement('span'));
+      const fakePromo=document.createElement('span');fakePromo.className='upsellBanner';document.getElementById('player').appendChild(fakePromo);
       await wait(250);
       const final=window.__scClient.diagnostics();
       assert(!final.timer_active,'Mutation batch drains');
-      return {passed:true,tests:15,initial,background,final};
+      assert(final.scans===beforeIrrelevant,'Irrelevant and player mutations do not schedule scans');
+      assert(!fakePromo.hasAttribute('data-sc-client-hidden'),'Player subtree is never cleaned');
+      return {passed:true,tests:17,initial,background,final};
     })()''', True)
     output = root / '.working' / 'verification' / 'cleanup-browser.json'
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,8 @@
 
 mod instance;
 mod policy;
+mod resource_filter;
+mod resource_policy;
 mod settings;
 
 use settings::{DeferredSave, Settings, WindowState};
@@ -205,7 +207,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_dir = dir.clone();
     let load_proxy = proxy.clone();
     let view = WebViewBuilder::new_with_web_context(&mut context)
-        .with_url("https://soundcloud.com/discover")
         .with_initialization_script(&script)
         .with_background_color((11, 11, 12, 255))
         .with_devtools(cfg!(debug_assertions))
@@ -277,6 +278,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(&window)?;
     log(&dir, started, "webview_built");
+    let resource_filter = match resource_filter::ResourceFilter::install(&view, &prefs) {
+        Ok(filter) => Some(filter),
+        Err(error) => {
+            log(
+                &dir,
+                started,
+                &format!("optional_resource_filter_unavailable {error}"),
+            );
+            None
+        }
+    };
+    view.load_url("https://soundcloud.com/discover")?;
     let mut deferred = DeferredSave::default();
     let mut minimized = false;
 
@@ -292,12 +305,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_background(&view, minimized, prefs.efficiency);
             }
             Event::UserEvent(Action::Status) => {
-                let status = serde_json::json!({"cache_mib":cache_size(&dir) as f64 / 1_048_576.0,"low_memory":minimized && prefs.efficiency});
+                let status = serde_json::json!({"cache_mib":cache_size(&dir) as f64 / 1_048_576.0,"low_memory":minimized && prefs.efficiency,"artist_requests_blocked":resource_filter.as_ref().map(|f|f.artist_count.get()).unwrap_or(0),"advertising_requests_blocked":resource_filter.as_ref().map(|f|f.advertising_count.get()).unwrap_or(0)});
                 let _ = view.evaluate_script(&format!("window.__scClient?.status({status});"));
             }
             Event::UserEvent(Action::Settings(next)) => {
                 apply_window(&window, &next, &prefs, &mut normal_size);
                 prefs = next;
+                if let Some(filter) = &resource_filter { *filter.settings.borrow_mut() = prefs.clone(); }
                 if let Err(error) = settings::write_json(&dir.join("settings.json"), &prefs) { log(&dir, started, &format!("settings_save_failed {error}")); }
                 set_background(&view, minimized, prefs.efficiency);
             }

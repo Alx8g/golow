@@ -5,6 +5,12 @@
   if (window.__scClient) return;
 
   const settings = Object.assign({cleanup:true, efficiency:true, compact:false, always_on_top:false}, window.__scInitialSettings);
+  // Same-origin preferences avoid briefly restoring old startup values on each
+  // full navigation. Rust validates and owns the persisted native settings.
+  try {
+    const cached = JSON.parse(localStorage.getItem('sc-client-settings-v1') || '{}');
+    for (const key of Object.keys(settings)) if (typeof cached[key] === 'boolean') settings[key] = cached[key];
+  } catch {}
   const recovery = new URLSearchParams(location.search).has('noclean') || /(?:^#|[&#])noclean(?:[=&]|$)/.test(location.hash);
   const promoSelector = [
     '.upsellBanner', '.premiumUpsell', '.mobileAppsButtons', '.appBanner',
@@ -19,6 +25,7 @@
   // host module, not artistShortcutsModule, which contains the user's New Tracks.
   const explicitPromo = /^(?:upsellBanner|premiumUpsell|mobileAppsButtons|appBanner|artistProBanner|artistUpsell|homeCreditTracker)$/;
   const protectedSelector = 'audio,video,input,form,[role="dialog"],.playControls,button[aria-label*="Play"],button[aria-label*="Pause"]';
+  const irrelevantMutationSelector = '.playControls,.waveform,.waveform__layer,.playbackTimeline,[data-sc-client-hidden],#sc-client-settings';
   const hidden = new Set();
   const pending = new Set();
   let observer = null, timer = null, style = null, host = null, shadow = null, nativeHidden = false;
@@ -29,6 +36,7 @@
   const send = value => {
     if (window.ipc && typeof window.ipc.postMessage === 'function') window.ipc.postMessage(JSON.stringify(value));
   };
+  const cacheSettings = () => { try { localStorage.setItem('sc-client-settings-v1', JSON.stringify(settings)); } catch {} };
 
   function isPromo(el) {
     if (!el || el.nodeType !== 1 || el === document.body || el === document.documentElement || el === host) return false;
@@ -83,7 +91,9 @@
           for (const el of hidden) if (node === el || (node.contains && node.contains(el))) hidden.delete(el);
         }
         for (const node of record.addedNodes) {
-          if (node.nodeType !== 1 || node === host || node === style) continue;
+          if (node.nodeType !== 1 || node === host || node === style || !node.isConnected) continue;
+          if (node.closest(irrelevantMutationSelector)) continue;
+          if (!node.matches(promoSelector) && !node.querySelector(promoSelector)) continue;
           pending.add(node);
           if (pending.size > 128) { pending.clear(); pending.add(document); break; }
         }
@@ -95,7 +105,7 @@
 
   function updateStatus() {
     if (!shadow) return;
-    const text = status ? `Cache: ${status.cache_mib.toFixed(1)} MiB. Background memory: ${status.low_memory ? 'Low' : 'Normal'}.` : 'Cache size is calculated only when settings are opened.';
+    const text = status ? `Cache: ${status.cache_mib.toFixed(1)} MiB. Background memory: ${status.low_memory ? 'Low' : 'Normal'}. Optional requests skipped: ${(status.artist_requests_blocked || 0) + (status.advertising_requests_blocked || 0)}.` : 'Cache size is calculated only when settings are opened.';
     shadow.getElementById('status').textContent = text;
     for (const key of ['cleanup','efficiency','compact','always_on_top']) shadow.getElementById(key).checked = !!settings[key];
     shadow.getElementById('recovery').hidden = !recovery;
@@ -123,13 +133,13 @@
       <section id="panel" role="dialog" aria-label="SoundCloud app settings" hidden>
       <button id="close" aria-label="Close settings">Close</button><h2>SoundCloud Go+</h2>
       <label><input id="cleanup" type="checkbox"> Hide promotions</label>
-      <label><input id="efficiency" type="checkbox"> Reduce background memory</label>
+      <label><input id="efficiency" type="checkbox"> Reduce background work</label>
       <label><input id="compact" type="checkbox"> Compact window</label>
       <label><input id="always_on_top" type="checkbox"> Keep window on top</label>
       <p id="recovery" hidden>Cleanup is disabled by the noclean recovery URL.</p>
       <p><a href="https://soundcloud.com/settings/streaming">Audio quality settings</a></p>
       <p>Choose High quality audio for eligible Go+ tracks. This app does not infer quality from your subscription.</p>
-      <p id="status"></p><p>Login and playback stay active in the background. No automatic cache clearing.</p>
+      <p id="status"></p><p>Login and playback stay active in the background. No automatic cache clearing. Request-filter changes take full effect after reload.</p>
       <p>Ctrl+, opens settings. Standard SoundCloud media controls remain available.</p>
       </section>`;
     document.body.appendChild(host);
@@ -138,6 +148,7 @@
     for (const key of ['cleanup','efficiency','compact','always_on_top']) {
       shadow.getElementById(key).addEventListener('change', event => {
         settings[key] = event.target.checked;
+        cacheSettings();
         if (key === 'cleanup') { fullScanNeeded = true; refreshLifecycle(); }
         send({type:'settings', value:settings});
       });
@@ -154,7 +165,7 @@
   window.addEventListener('pageshow', () => { fullScanNeeded = true; refreshLifecycle(); });
   window.__scClient = Object.freeze({
     setNativeHidden(hidden) { nativeHidden = !!hidden; fullScanNeeded = true; refreshLifecycle(); },
-    update(value) { Object.assign(settings, value); fullScanNeeded = true; refreshLifecycle(); updateStatus(); },
+    update(value) { Object.assign(settings, value); cacheSettings(); fullScanNeeded = true; refreshLifecycle(); updateStatus(); },
     status(value) { status = value; updateStatus(); },
     openSettings:settingsOpen,
     diagnostics() { return {...counters, observer_active:!!observer, timer_active:timer !== null, hidden_count:hidden.size, visible:visible(), settings:{...settings}, recovery}; }
