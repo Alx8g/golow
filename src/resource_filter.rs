@@ -13,7 +13,7 @@ use webview2_com::{
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
     },
-    WebResourceRequestedEventHandler,
+    NavigationStartingEventHandler, WebResourceRequestedEventHandler,
 };
 use windows::core::{Interface, HSTRING, PWSTR};
 use wry::{WebView, WebViewExtWindows};
@@ -21,6 +21,7 @@ use wry::{WebView, WebViewExtWindows};
 pub struct ResourceFilter {
     view: ICoreWebView2,
     token: i64,
+    frame_token: i64,
     pub settings: Rc<RefCell<Settings>>,
     pub artist_count: Rc<Cell<u32>>,
     pub advertising_count: Rc<Cell<u32>>,
@@ -70,9 +71,30 @@ impl ResourceFilter {
             }
             Ok(())
         }));
+        let frame_settings = settings.clone();
+        let frame_count = artist_count.clone();
+        let frame_handler = NavigationStartingEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else {
+                return Ok(());
+            };
+            unsafe {
+                let mut uri = PWSTR::null();
+                args.Uri(&mut uri)?;
+                let uri = take_pwstr(uri);
+                if blocked_resource(&uri, true, &frame_settings.borrow())
+                    == Some(BlockedResource::ArtistTools)
+                {
+                    args.SetCancel(true)?;
+                    frame_count.set(frame_count.get().saturating_add(1));
+                }
+            }
+            Ok(())
+        }));
         let mut token = 0;
+        let mut frame_token = 0;
         unsafe {
             native.add_WebResourceRequested(&handler, &mut token)?;
+            native.add_FrameNavigationStarting(&frame_handler, &mut frame_token)?;
             for (pattern, context) in [
                 (
                     "https://soundcloud.com/n/embeds/credit-tracker*",
@@ -101,6 +123,7 @@ impl ResourceFilter {
         Ok(Self {
             view: native,
             token,
+            frame_token,
             settings,
             artist_count,
             advertising_count,
@@ -111,6 +134,7 @@ impl Drop for ResourceFilter {
     fn drop(&mut self) {
         unsafe {
             let _ = self.view.remove_WebResourceRequested(self.token);
+            let _ = self.view.remove_FrameNavigationStarting(self.frame_token);
         }
     }
 }
