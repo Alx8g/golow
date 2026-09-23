@@ -36,8 +36,10 @@ try {
     Move-Item -LiteralPath $staged -Destination $exePath
     if ((Get-FileHash -LiteralPath $exePath).Hash -ne $sourceHash) { throw 'Installed hash mismatch.' }
 } catch {
-    if (-not (Test-Path $exePath) -and (Test-Path (Join-Path $backupDir 'soundcloud-go-client.exe'))) {
+    if (Test-Path (Join-Path $backupDir 'soundcloud-go-client.exe')) {
+        if (Test-Path $exePath) { Move-Item -LiteralPath $exePath -Destination (Join-Path $backupDir 'failed-new-build.exe') }
         Copy-Item (Join-Path $backupDir 'soundcloud-go-client.exe') $exePath
+        if ($wasRunning) { Start-Process -FilePath $exePath }
     }
     throw
 }
