@@ -8,7 +8,7 @@ script = (root / 'src' / 'client.js').read_text(encoding='utf-8')
 fixture_script = script.replace("location.protocol !== 'https:' ||\n      !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)", "false", 1)
 assert fixture_script != script
 html = '''<html><head><title>SoundCloud cleanup fixture</title></head><body>
-<div id="app"><div class="upsellBanner" id="promo">Try Artist Pro</div>
+<header class="header" id="header"></header><div id="app"><div class="upsellBanner" id="promo">Try Artist Pro</div>
 <div class="announcementBanner" id="ordinary">Account notice <button>Close</button></div>
 <div class="upsellBanner" id="protected"><button aria-label="Play track">Play</button></div>
 <div class="cookieBanner" id="consent">Choose cookies <button>Accept</button></div>
@@ -36,12 +36,15 @@ try:
     result = evaluate('''(async()=>{
       const wait=ms=>new Promise(r=>setTimeout(r,ms));
       const assert=(value,msg)=>{if(!value)throw new Error(msg);};
-      const hidden=id=>document.getElementById(id).hasAttribute('data-sc-client-hidden');
+      const hidden=id=>getComputedStyle(document.getElementById(id)).display==='none';
       await wait(200);
       assert(hidden('promo')&&hidden('upsell-link'),'Explicit promos hidden');
       for(const id of ['ordinary','protected','consent','player','track','new-tracks'])assert(!hidden(id),'Protected content: '+id);
       assert(hidden('artist-tools'),'Artist Tools iframe host hidden without touching New Tracks');
       const initial=window.__scClient.diagnostics();
+      assert(!initial.settings_built,'Settings panel is deferred until opened');
+      assert(document.querySelectorAll('link[rel="preconnect"]').length===3,'Only three first-party origins are preconnected');
+      assert(!document.getElementById('sc-client-settings').shadowRoot.getElementById('panel'),'No unused settings DOM on startup');
       await wait(3200);
       assert(window.__scClient.diagnostics().scans===initial.scans,'No idle polling scans');
       document.getElementById('dynamic').innerHTML='<div class="upsellBanner" id="new-promo">New upsell</div>';
@@ -55,7 +58,8 @@ try:
       const background=window.__scClient.diagnostics();
       assert(!background.observer_active&&!background.timer_active,'Background has no timer or observer');
       document.getElementById('dynamic').innerHTML='<div class="upsellBanner" id="background-promo">Later promo</div>';
-      await wait(250); assert(!hidden('background-promo'),'No background scan');
+      await wait(250); assert(hidden('background-promo'),'CSS hides new promos without background JavaScript');
+      assert(window.__scClient.diagnostics().scans===background.scans,'Background CSS does not trigger scans');
       window.__scClient.setNativeHidden(false);
       assert(hidden('background-promo'),'Resume catches changed content');
       window.__scClient.openSettings(true);
@@ -63,6 +67,8 @@ try:
       assert(!shadow.getElementById('panel').hidden,'Settings opens');
       shadow.getElementById('efficiency').click();
       assert(window.__scMessages.some(x=>x.type==='settings'&&!x.value.efficiency),'Settings uses bounded native message');
+      window.__scClient.status({cache_mib:null,low_memory:false});
+      assert(shadow.getElementById('status').textContent.includes('calculating'),'Settings can open before disk scan finishes');
       window.__scClient.status({cache_mib:400,low_memory:false});
       assert(shadow.getElementById('status').textContent.includes('400.0'),'Status rendered as text');
       shadow.getElementById('close').click();assert(shadow.getElementById('panel').hidden,'Settings closes');
@@ -73,8 +79,12 @@ try:
       const final=window.__scClient.diagnostics();
       assert(!final.timer_active,'Mutation batch drains');
       assert(final.scans===beforeIrrelevant,'Irrelevant and player mutations do not schedule scans');
-      assert(!fakePromo.hasAttribute('data-sc-client-hidden'),'Player subtree is never cleaned');
-      return {passed:true,tests:17,initial,background,final};
+      assert(getComputedStyle(fakePromo).display!=='none','Player subtree is never cleaned');
+      const beforeHeader=final.scans;
+      document.getElementById('header').innerHTML='<div class="announcementBanner" id="header-promo">Try Artist Pro</div>';
+      await wait(250);assert(hidden('header-promo'),'Scoped header announcements are cleaned');
+      assert(window.__scClient.diagnostics().scans>beforeHeader,'Header mutation reaches bounded observer');
+      return {passed:true,tests:24,initial,background,final:window.__scClient.diagnostics()};
     })()''', True)
     output = root / '.working' / 'verification' / 'cleanup-browser.json'
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -17,8 +17,17 @@ fn find_rc() -> Option<PathBuf> {
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
+    println!("cargo:rerun-if-changed=assets/icon.png");
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    // Decode once at build time, not during every application launch.
+    let decoded = image::open(manifest.join("assets/icon.png"))
+        .expect("valid app icon")
+        .to_rgba8();
+    let (width, height) = decoded.dimensions();
+    std::fs::write(out.join("icon.rgba"), decoded.as_raw()).expect("write decoded icon");
+    println!("cargo:rustc-env=APP_ICON_WIDTH={width}");
+    println!("cargo:rustc-env=APP_ICON_HEIGHT={height}");
     let icon = manifest.join("assets").join("icon.ico");
     let rc_path = out.join("app.rc");
     let res_path = out.join("app.res");

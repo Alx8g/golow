@@ -11,101 +11,98 @@
     const cached = JSON.parse(localStorage.getItem('sc-client-settings-v1') || '{}');
     for (const key of Object.keys(settings)) if (typeof cached[key] === 'boolean') settings[key] = cached[key];
   } catch {}
+  // Exact, small selectors hide known promotions before their first paint.
+  // Structural :has exclusions preserve player/form/consent containers.
   const recovery = new URLSearchParams(location.search).has('noclean') || /(?:^#|[&#])noclean(?:[=&]|$)/.test(location.hash);
-  const promoSelector = [
-    '.upsellBanner', '.premiumUpsell', '.mobileAppsButtons', '.appBanner',
-    '[data-testid="promoted-track"]', '[data-testid="upsell-banner"]',
-    '[data-testid="artist-pro-banner"]', '.artistProBanner', '.artistUpsell',
-    '.homeCreditTracker',
-    '.announcementBanner', '.announcementBanner__content',
-    'a[href="/go"]', 'a[href="/pro"]', 'a[href^="/go?"]', 'a[href^="/pro?"]',
-    'a[href^="https://artists.soundcloud.com"]'
-  ].join(',');
-  // Artist Tools is an embedded iframe inside homeCreditTracker. Hide its exact
-  // host module, not artistShortcutsModule, which contains the user's New Tracks.
-  const explicitPromo = /^(?:upsellBanner|premiumUpsell|mobileAppsButtons|appBanner|artistProBanner|artistUpsell|homeCreditTracker)$/;
-  const protectedSelector = 'audio,video,input,form,[role="dialog"],.playControls,button[aria-label*="Play"],button[aria-label*="Pause"]';
-  const irrelevantMutationSelector = '.playControls,.waveform,.waveform__layer,.playbackTimeline,[data-sc-client-hidden],#sc-client-settings';
-  const hidden = new Set();
-  const pending = new Set();
-  let observer = null, timer = null, style = null, host = null, shadow = null, nativeHidden = false;
-  let fullScanNeeded = true, status = null;
-  const counters = {scans:0, mutations:0, candidates:0};
-  const visible = () => !document.hidden && !nativeHidden;
-  const cleanupEnabled = () => settings.cleanup && !recovery && visible();
-  const send = value => {
-    if (window.ipc && typeof window.ipc.postMessage === 'function') window.ipc.postMessage(JSON.stringify(value));
-  };
-  const cacheSettings = () => { try { localStorage.setItem('sc-client-settings-v1', JSON.stringify(settings)); } catch {} };
+  const explicitSelectors = [
+    '.upsellBanner','.premiumUpsell','.mobileAppsButtons','.appBanner',
+    '[data-testid="promoted-track"]','[data-testid="upsell-banner"]',
+    '[data-testid="artist-pro-banner"]','.artistProBanner','.artistUpsell',
+    '.homeCreditTracker','a[href="/go"]','a[href="/pro"]',
+    'a[href^="/go?"]','a[href^="/pro?"]','a[href^="https://artists.soundcloud.com"]'
+  ];
+  const protectedSelector = 'audio,video,input,form,[role="dialog"],.playControls,.waveform,.playbackTimeline,button[aria-label*="Play"],button[aria-label*="Pause"]';
+  const guarded = ':not(html,body,#root,#app,#main,#__next):not(:is('+protectedSelector+')):not(:has('+protectedSelector+')):not(:is(.playControls *,.waveform *,.playbackTimeline *))';
+  const promoCss = explicitSelectors.map(selector=>'html[data-sc-cleanup] '+selector+guarded).join(',')+'{display:none!important}';
+  const bannerSelector = '.announcementBanner,.announcementBanner__content';
+  const marked = new Set(), pending = new Set();
+  let observer=null, timer=null, style=null, host=null, shadow=null, nativeHidden=false;
+  let fullScanNeeded=true, status=null, settingsBuilt=false;
+  const counters={scans:0,mutations:0,candidates:0};
+  const visible=()=>!document.hidden&&!nativeHidden;
+  const cleanupEnabled=()=>settings.cleanup&&!recovery;
+  const send=value=>{if(window.ipc&&typeof window.ipc.postMessage==='function')window.ipc.postMessage(JSON.stringify(value));};
+  const cacheSettings=()=>{try{const value=JSON.stringify(settings);if(localStorage.getItem('sc-client-settings-v1')!==value)localStorage.setItem('sc-client-settings-v1',value);}catch{}};
 
-  function isPromo(el) {
-    if (!el || el.nodeType !== 1 || el === document.body || el === document.documentElement || el === host) return false;
-    if (['root','app','main','__next'].includes(el.id) || el.matches(protectedSelector) || el.querySelector(protectedSelector)) return false;
-    if (el.tagName === 'A') return true;
-    if ([...el.classList].some(name => explicitPromo.test(name))) return true;
-    if (['promoted-track','upsell-banner','artist-pro-banner'].includes(el.getAttribute('data-testid'))) return true;
-    return /get heard by up to 100 listeners|unlock artist tools|try artist pro|uploading tracks just got/i.test(el.textContent || '');
-  }
-
-  function scan(root) {
-    if (!cleanupEnabled() || !root || (root !== document && !root.isConnected)) return;
-    counters.scans++;
-    const candidates = [];
-    if (root.nodeType === 1 && root.matches(promoSelector)) candidates.push(root);
-    if (root.querySelectorAll) candidates.push(...root.querySelectorAll(promoSelector));
-    for (const el of candidates) {
-      counters.candidates++;
-      if (!isPromo(el)) continue;
-      el.setAttribute('data-sc-client-hidden', '');
-      hidden.add(el);
+  function preconnect(){
+    if(!settings.efficiency||!document.documentElement)return;
+    for(const href of ['https://api-v2.soundcloud.com','https://a-v2.sndcdn.com','https://i1.sndcdn.com']){
+      if(document.querySelector('link[rel="preconnect"][href="'+href+'"]'))continue;
+      const link=document.createElement('link');link.rel='preconnect';link.href=href;link.crossOrigin='anonymous';
+      (document.head||document.documentElement).appendChild(link);
     }
-    for (const el of hidden) if (!el.isConnected) hidden.delete(el);
   }
-
-  function flush() {
-    timer = null;
-    if (!cleanupEnabled()) { pending.clear(); return; }
-    const roots = [...pending]; pending.clear();
-    for (const root of roots) if (!roots.some(other => other !== root && other.contains && other.contains(root))) scan(root);
+  function installStyle(){
+    if(style||!document.documentElement)return;
+    style=document.createElement('style');style.id='sc-client-style';
+    style.textContent=promoCss+'html[data-sc-cleanup] [data-sc-client-hidden]{display:none!important}';
+    (document.head||document.documentElement).appendChild(style);
   }
-
-  function stop() {
-    if (observer) { observer.disconnect(); observer = null; }
-    if (timer !== null) { clearTimeout(timer); timer = null; }
+  function scan(root){
+    if(!cleanupEnabled()||!visible()||!root||(root!==document&&!root.isConnected))return;
+    counters.scans++;
+    const candidates=[];
+    if(root.nodeType===1&&root.matches(bannerSelector))candidates.push(root);
+    if(root.querySelectorAll)candidates.push(...root.querySelectorAll(bannerSelector));
+    for(const el of candidates){
+      counters.candidates++;
+      if(el.matches(protectedSelector)||el.querySelector(protectedSelector)||el.closest('.playControls,.waveform,.playbackTimeline'))continue;
+      if(!/get heard by up to 100 listeners|unlock artist tools|try artist pro|uploading tracks just got/i.test(el.textContent||''))continue;
+      el.setAttribute('data-sc-client-hidden','');marked.add(el);
+    }
+    for(const el of marked)if(!el.isConnected)marked.delete(el);
+  }
+  function flush(){
+    timer=null;const roots=[...pending];pending.clear();
+    if(!cleanupEnabled()||!visible())return;
+    for(const root of roots)if(!roots.some(other=>other!==root&&other.contains&&other.contains(root)))scan(root);
+  }
+  function stop(){
+    if(observer){observer.disconnect();observer=null;}
+    if(timer!==null){clearTimeout(timer);timer=null;}
     pending.clear();
   }
-
-  function refreshLifecycle() {
+  function refreshLifecycle(){
+    installStyle();
+    document.documentElement?.toggleAttribute('data-sc-cleanup',cleanupEnabled());
     stop();
-    if (!settings.cleanup || recovery) {
-      for (const el of hidden) el.removeAttribute('data-sc-client-hidden');
-      hidden.clear();
-      fullScanNeeded = true;
+    if(!cleanupEnabled()){
+      for(const el of marked)el.removeAttribute('data-sc-client-hidden');marked.clear();fullScanNeeded=true;return;
     }
-    if (!cleanupEnabled() || !document.body) return;
-    if (fullScanNeeded) { scan(document); fullScanNeeded = false; }
-    observer = new MutationObserver(records => {
-      counters.mutations += records.length;
-      for (const record of records) {
-        for (const node of record.removedNodes) {
-          for (const el of hidden) if (node === el || (node.contains && node.contains(el))) hidden.delete(el);
-        }
-        for (const node of record.addedNodes) {
-          if (node.nodeType !== 1 || node === host || node === style || !node.isConnected) continue;
-          if (node.closest(irrelevantMutationSelector)) continue;
-          if (!node.matches(promoSelector) && !node.querySelector(promoSelector)) continue;
-          pending.add(node);
-          if (pending.size > 128) { pending.clear(); pending.add(document); break; }
+    if(!visible()||!document.body)return;
+    if(fullScanNeeded){scan(document);fullScanNeeded=false;}
+    // Only known notice containers need a text-based fallback. Exact promo
+    // classes anywhere on the page are handled by CSS without JS callbacks.
+    const regions=[...document.querySelectorAll('.header,.announcements,.announcementBannerContainer')];
+    if(!regions.length)return;
+    observer=new MutationObserver(records=>{
+      counters.mutations+=records.length;
+      for(const record of records){
+        const parent=record.target.nodeType===1?record.target:record.target.parentElement;
+        const banner=parent?.closest(bannerSelector);if(banner)pending.add(banner);
+        for(const node of record.addedNodes){
+          if(node.nodeType!==1||!node.isConnected)continue;
+          if(node.matches(bannerSelector)||node.querySelector(bannerSelector))pending.add(node);
         }
       }
-      if (pending.size && timer === null) timer = setTimeout(flush, 150);
+      if(pending.size&&timer===null)timer=setTimeout(flush,150);
     });
-    observer.observe(document.body, {childList:true, subtree:true});
+    for(const region of regions)observer.observe(region,{childList:true,subtree:true,characterData:true});
   }
 
   function updateStatus() {
-    if (!shadow) return;
-    const text = status ? `Cache: ${status.cache_mib.toFixed(1)} MiB. Background memory: ${status.low_memory ? 'Low' : 'Normal'}. Optional requests skipped: ${(status.artist_requests_blocked || 0) + (status.advertising_requests_blocked || 0)}.` : 'Cache size is calculated only when settings are opened.';
+    if (!shadow || !settingsBuilt) return;
+    const text = status ? `Cache: ${status.cache_mib == null ? 'calculating' : status.cache_mib.toFixed(1)+' MiB'}. Background memory: ${status.low_memory ? 'Low' : 'Normal'}. Optional requests skipped: ${(status.artist_requests_blocked || 0) + (status.advertising_requests_blocked || 0)}.` : 'Cache size is calculated only when settings are opened.';
     shadow.getElementById('status').textContent = text;
     for (const key of ['cleanup','efficiency','compact','always_on_top']) shadow.getElementById(key).checked = !!settings[key];
     shadow.getElementById('recovery').hidden = !recovery;
@@ -113,19 +110,24 @@
 
   function settingsOpen(open = true) {
     if (!shadow) return;
+    if (open && !settingsBuilt) buildSettings();
+    if (!settingsBuilt) return;
     shadow.getElementById('panel').hidden = !open;
     if (open) { send({type:'status'}); updateStatus(); shadow.getElementById('close').focus(); }
   }
 
-  function mount() {
-    if (!document.body) return;
-    style = document.createElement('style');
-    style.id = 'sc-client-style';
-    style.textContent = '[data-sc-client-hidden]{display:none!important}';
-    (document.head || document.documentElement).appendChild(style);
-    host = document.createElement('div'); host.id = 'sc-client-settings';
-    host.style.cssText = 'position:fixed;right:14px;top:58px;z-index:2147483647;';
-    shadow = host.attachShadow({mode:'open'});
+  function mount(){
+    if(!document.body)return;
+    preconnect();installStyle();
+    host=document.createElement('div');host.id='sc-client-settings';
+    host.style.cssText='position:fixed;right:14px;top:58px;z-index:2147483647;';
+    shadow=host.attachShadow({mode:'open'});
+    shadow.innerHTML='<style>:host{font:13px system-ui;color-scheme:dark}button{background:#242427;color:#eee;border:1px solid #555;border-radius:6px;padding:7px 10px;cursor:pointer}</style><button id="open" aria-label="SoundCloud app settings" title="App settings (Ctrl+,)">App settings</button>';
+    shadow.getElementById('open').addEventListener('click',()=>settingsOpen(true));
+    document.body.appendChild(host);refreshLifecycle();
+  }
+  function buildSettings(){
+    settingsBuilt=true;
     shadow.innerHTML = `<style>
       :host{font:13px/1.5 system-ui,sans-serif;color:#eee;color-scheme:dark}button,a,label{font:inherit}button,a{cursor:pointer}button{background:#242427;color:#eee;border:1px solid #555;border-radius:6px;padding:7px 10px}button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid #ff5500;outline-offset:2px}button:hover{background:#38383c}#panel{box-sizing:border-box;background:#151517;border:1px solid #555;border-radius:10px;padding:16px;width:320px;max-width:calc(100vw - 28px);max-height:calc(100vh - 100px);overflow:auto;box-shadow:0 6px 25px #0008;margin-top:6px}h2{font-size:16px;margin:0 0 10px}label{display:block;margin:10px 0}p{margin:9px 0;color:#bbb}a{color:#ff9866}#close{float:right}#status{font-size:12px}[hidden]{display:none!important}
       </style>
@@ -142,7 +144,6 @@
       <p id="status"></p><p>Login and playback stay active in the background. No automatic cache clearing. Request-filter changes take full effect after reload.</p>
       <p>Ctrl+, opens settings. Standard SoundCloud media controls remain available.</p>
       </section>`;
-    document.body.appendChild(host);
     shadow.getElementById('open').addEventListener('click', () => settingsOpen(shadow.getElementById('panel').hidden));
     shadow.getElementById('close').addEventListener('click', () => { settingsOpen(false); shadow.getElementById('open').focus(); });
     for (const key of ['cleanup','efficiency','compact','always_on_top']) {
@@ -153,22 +154,31 @@
         send({type:'settings', value:settings});
       });
     }
-    updateStatus(); refreshLifecycle();
+    updateStatus();
   }
 
   document.addEventListener('visibilitychange', () => { fullScanNeeded = true; refreshLifecycle(); });
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && event.key === ',') { event.preventDefault(); settingsOpen(true); }
-    if (event.key === 'Escape' && shadow && !shadow.getElementById('panel').hidden) settingsOpen(false);
+    if (event.key === 'Escape' && shadow && settingsBuilt && !shadow.getElementById('panel').hidden) settingsOpen(false);
   });
   window.addEventListener('pagehide', stop);
   window.addEventListener('pageshow', () => { fullScanNeeded = true; refreshLifecycle(); });
   window.__scClient = Object.freeze({
-    setNativeHidden(hidden) { nativeHidden = !!hidden; fullScanNeeded = true; refreshLifecycle(); },
-    update(value) { Object.assign(settings, value); cacheSettings(); fullScanNeeded = true; refreshLifecycle(); updateStatus(); },
+    setNativeHidden(hidden) { if(nativeHidden===!!hidden)return;nativeHidden=!!hidden;fullScanNeeded=true;refreshLifecycle(); },
+    update(value) {const changed=Object.keys(settings).some(k=>typeof value[k]==='boolean'&&value[k]!==settings[k]);Object.assign(settings,value);cacheSettings();if(changed){fullScanNeeded=true;refreshLifecycle();}updateStatus();},
     status(value) { status = value; updateStatus(); },
     openSettings:settingsOpen,
-    diagnostics() { return {...counters, observer_active:!!observer, timer_active:timer !== null, hidden_count:hidden.size, visible:visible(), settings:{...settings}, recovery}; }
+    diagnostics() { return {...counters, observer_active:!!observer, timer_active:timer !== null, hidden_count:document.querySelectorAll(explicitSelectors.join(',')).length+marked.size,settings_built:settingsBuilt, visible:visible(), settings:{...settings}, recovery}; }
   });
+  function initializeDocument(){
+    if(!document.documentElement)return false;
+    preconnect();installStyle();document.documentElement.toggleAttribute('data-sc-cleanup',cleanupEnabled());return true;
+  }
+  if(!initializeDocument()){
+    const rootReady=new MutationObserver(()=>{if(initializeDocument())rootReady.disconnect();});
+    rootReady.observe(document,{childList:true});
+    document.addEventListener('DOMContentLoaded',()=>{rootReady.disconnect();initializeDocument();},{once:true});
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
 })();

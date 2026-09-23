@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cache_stats;
 mod instance;
 mod policy;
 mod resource_filter;
@@ -29,6 +30,7 @@ use wry::{
 enum Action {
     Settings(Settings),
     Status,
+    CacheReady(u64),
     PageLoaded,
     ClosePopup(WindowId),
 }
@@ -67,36 +69,28 @@ fn log(dir: &Path, started: Instant, message: &str) {
 }
 
 fn load_icon() -> Option<Icon> {
-    let img = image::load_from_memory(include_bytes!("../assets/icon.png"))
-        .ok()?
-        .to_rgba8();
-    let (w, h) = img.dimensions();
-    Icon::from_rgba(img.into_raw(), w, h).ok()
+    Icon::from_rgba(
+        include_bytes!(concat!(env!("OUT_DIR"), "/icon.rgba")).to_vec(),
+        env!("APP_ICON_WIDTH").parse().ok()?,
+        env!("APP_ICON_HEIGHT").parse().ok()?,
+    )
+    .ok()
 }
 
-fn cache_size(dir: &Path) -> u64 {
-    fn size(path: &Path) -> u64 {
-        std::fs::read_dir(path)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .map(|entry| {
-                let Ok(kind) = entry.file_type() else {
-                    return 0;
-                };
-                if kind.is_symlink() {
-                    return 0;
-                }
-                if kind.is_dir() {
-                    size(&entry.path())
-                } else {
-                    entry.metadata().map(|m| m.len()).unwrap_or(0)
-                }
-            })
-            .sum()
-    }
-    let profile = dir.join("webview/EBWebView/Default");
-    size(&profile.join("Cache")) + size(&profile.join("Code Cache"))
+fn send_status(
+    view: &WebView,
+    stats: &cache_stats::CacheStats,
+    minimized: bool,
+    prefs: &Settings,
+    filter: Option<&resource_filter::ResourceFilter>,
+) {
+    let status = serde_json::json!({
+        "cache_mib":stats.value().map(|bytes|bytes as f64 / 1_048_576.0),
+        "low_memory":minimized && prefs.efficiency,
+        "artist_requests_blocked":filter.map(|f|f.artist_count.get()).unwrap_or(0),
+        "advertising_requests_blocked":filter.map(|f|f.advertising_count.get()).unwrap_or(0)
+    });
+    let _ = view.evaluate_script(&format!("window.__scClient?.status({status});"));
 }
 
 fn set_background(view: &WebView, hidden: bool, efficiency: bool) {
@@ -292,12 +286,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     view.load_url("https://soundcloud.com/discover")?;
     let mut deferred = DeferredSave::default();
     let mut minimized = false;
+    let mut cache_stats = cache_stats::CacheStats::default();
 
     event_loop.run(move |event, _, control_flow| {
         let _keep_alive = &instance;
         let mut exit = false;
         match event {
-            Event::UserEvent(Action::ClosePopup(id)) => popups.borrow_mut().retain(|popup| popup.window.id() != id),
+            Event::UserEvent(Action::ClosePopup(id)) => {
+                popups.borrow_mut().retain(|popup| popup.window.id() != id)
+            }
             Event::UserEvent(Action::PageLoaded) => {
                 if let Ok(json) = serde_json::to_string(&prefs) {
                     let _ = view.evaluate_script(&format!("window.__scClient?.update({json});"));
@@ -305,41 +302,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_background(&view, minimized, prefs.efficiency);
             }
             Event::UserEvent(Action::Status) => {
-                let status = serde_json::json!({"cache_mib":cache_size(&dir) as f64 / 1_048_576.0,"low_memory":minimized && prefs.efficiency,"artist_requests_blocked":resource_filter.as_ref().map(|f|f.artist_count.get()).unwrap_or(0),"advertising_requests_blocked":resource_filter.as_ref().map(|f|f.advertising_count.get()).unwrap_or(0)});
-                let _ = view.evaluate_script(&format!("window.__scClient?.status({status});"));
+                send_status(
+                    &view,
+                    &cache_stats,
+                    minimized,
+                    &prefs,
+                    resource_filter.as_ref(),
+                );
+                if cache_stats.request(Instant::now()) {
+                    let directory = dir.clone();
+                    let reply = proxy.clone();
+                    std::thread::spawn(move || {
+                        let _ = reply
+                            .send_event(Action::CacheReady(cache_stats::cache_size(&directory)));
+                    });
+                }
+            }
+            Event::UserEvent(Action::CacheReady(bytes)) => {
+                cache_stats.finish(bytes, Instant::now());
+                send_status(
+                    &view,
+                    &cache_stats,
+                    minimized,
+                    &prefs,
+                    resource_filter.as_ref(),
+                );
             }
             Event::UserEvent(Action::Settings(next)) => {
                 apply_window(&window, &next, &prefs, &mut normal_size);
                 prefs = next;
-                if let Some(filter) = &resource_filter { *filter.settings.borrow_mut() = prefs.clone(); }
-                if let Err(error) = settings::write_json(&dir.join("settings.json"), &prefs) { log(&dir, started, &format!("settings_save_failed {error}")); }
+                if let Some(filter) = &resource_filter {
+                    *filter.settings.borrow_mut() = prefs.clone();
+                }
+                if let Err(error) = settings::write_json(&dir.join("settings.json"), &prefs) {
+                    log(&dir, started, &format!("settings_save_failed {error}"));
+                }
                 set_background(&view, minimized, prefs.efficiency);
             }
-            Event::WindowEvent { window_id, event, .. } if window_id == window.id() => match event {
-                WindowEvent::CloseRequested => { exit = true; }
+            Event::WindowEvent {
+                window_id, event, ..
+            } if window_id == window.id() => match event {
+                WindowEvent::CloseRequested => {
+                    exit = true;
+                }
                 WindowEvent::Resized(size) => {
                     let hidden = window.is_minimized() || size.width == 0 || size.height == 0;
-                    if hidden != minimized { minimized = hidden; set_background(&view, minimized, prefs.efficiency); }
+                    if hidden != minimized {
+                        minimized = hidden;
+                        set_background(&view, minimized, prefs.efficiency);
+                    }
                     if !hidden && !window.is_maximized() && !prefs.compact {
-                        win_state.w = size.width; win_state.h = size.height; normal_size = size;
+                        win_state.w = size.width;
+                        win_state.h = size.height;
+                        normal_size = size;
                         deferred.mark(Instant::now());
                     }
                 }
                 WindowEvent::Moved(pos) if !window.is_minimized() && !window.is_maximized() => {
-                    win_state.x = pos.x; win_state.y = pos.y; deferred.mark(Instant::now());
+                    win_state.x = pos.x;
+                    win_state.y = pos.y;
+                    deferred.mark(Instant::now());
                 }
                 _ => {}
             },
-            Event::WindowEvent { window_id, event:WindowEvent::CloseRequested, .. } => {
-                popups.borrow_mut().retain(|popup| popup.window.id() != window_id);
+            Event::WindowEvent {
+                window_id,
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                popups
+                    .borrow_mut()
+                    .retain(|popup| popup.window.id() != window_id);
             }
             _ => {}
         }
         if (exit || deferred.take_if_due(Instant::now())) && win_state.valid() {
-            if let Err(error) = settings::write_json(&dir.join("window.json"), &win_state) { log(&dir, started, &format!("window_save_failed {error}")); }
+            if let Err(error) = settings::write_json(&dir.join("window.json"), &win_state) {
+                log(&dir, started, &format!("window_save_failed {error}"));
+            }
         }
-        *control_flow = if exit { ControlFlow::Exit }
-            else if let Some(deadline) = deferred.deadline() { ControlFlow::WaitUntil(deadline) }
-            else { ControlFlow::Wait };
+        *control_flow = if exit {
+            ControlFlow::Exit
+        } else if let Some(deadline) = deferred.deadline() {
+            ControlFlow::WaitUntil(deadline)
+        } else {
+            ControlFlow::Wait
+        };
     });
 }
