@@ -22,11 +22,13 @@ fn main() {
     let icon = manifest.join("assets").join("icon.ico");
     let rc_path = out.join("app.rc");
     let res_path = out.join("app.res");
+    let version = env::var("CARGO_PKG_VERSION").unwrap();
+    let numeric_version = format!("{},0", version.replace('.', ","));
     let rc_content = format!(
         "1 ICON \"{}\"\n\
          1 VERSIONINFO\n\
-         FILEVERSION 0,1,0,0\n\
-         PRODUCTVERSION 0,1,0,0\n\
+         FILEVERSION {numeric_version}\n\
+         PRODUCTVERSION {numeric_version}\n\
          BEGIN\n\
          \u{20} BLOCK \"StringFileInfo\"\n\
          \u{20} BEGIN\n\
@@ -34,8 +36,8 @@ fn main() {
          \u{20}\u{20} BEGIN\n\
          \u{20}\u{20}\u{20} VALUE \"FileDescription\", \"SoundCloud Go+\"\n\
          \u{20}\u{20}\u{20} VALUE \"ProductName\", \"SoundCloud Go+\"\n\
-         \u{20}\u{20}\u{20} VALUE \"FileVersion\", \"0.1.0\"\n\
-         \u{20}\u{20}\u{20} VALUE \"ProductVersion\", \"0.1.0\"\n\
+         \u{20}\u{20}\u{20} VALUE \"FileVersion\", \"{version}\"\n\
+         \u{20}\u{20}\u{20} VALUE \"ProductVersion\", \"{version}\"\n\
          \u{20}\u{20}\u{20} VALUE \"OriginalFilename\", \"soundcloud-go-client.exe\"\n\
          \u{20}\u{20} END\n\
          \u{20} END\n\
@@ -62,6 +64,8 @@ fn main() {
                 other
             ),
         },
-        None => println!("cargo:warning=no resource compiler found; building without embedded icon"),
+        None => {
+            println!("cargo:warning=no resource compiler found; building without embedded icon")
+        }
     }
 }
