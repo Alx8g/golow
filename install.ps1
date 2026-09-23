@@ -6,6 +6,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\SoundCloudGoPlus'
 $exePath = Join-Path $installDir 'soundcloud-go-client.exe'
+function Start-InstalledClient {
+    # WMI owns this desktop process, independent of an invoking terminal's job object.
+    $launch = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine=('"'+$exePath+'"'); CurrentDirectory=$installDir
+    }
+    if ($launch.ReturnValue -ne 0) { throw ('App launch failed: '+$launch.ReturnValue) }
+}
 if (-not (Test-Path -LiteralPath $BuildPath)) { throw "Build missing: $BuildPath" }
 $sourceHash = (Get-FileHash -LiteralPath $BuildPath -Algorithm SHA256).Hash
 $version = (Get-Item -LiteralPath $BuildPath).VersionInfo.FileVersion
@@ -39,7 +46,7 @@ try {
     if (Test-Path (Join-Path $backupDir 'soundcloud-go-client.exe')) {
         if (Test-Path $exePath) { Move-Item -LiteralPath $exePath -Destination (Join-Path $backupDir 'failed-new-build.exe') }
         Copy-Item (Join-Path $backupDir 'soundcloud-go-client.exe') $exePath
-        if ($wasRunning) { Start-Process -FilePath $exePath }
+        if ($wasRunning) { Start-InstalledClient }
     }
     throw
 }
@@ -59,5 +66,5 @@ New-Item -Path $reg -Force | Out-Null
     ForEach-Object { Set-ItemProperty -Path $reg -Name $_.Key -Value $_.Value }
 Set-ItemProperty -Path $reg -Name NoModify -Value 1 -Type DWord
 Set-ItemProperty -Path $reg -Name NoRepair -Value 1 -Type DWord
-if ($Restart -or $wasRunning) { Start-Process -FilePath $exePath }
+if ($Restart -or $wasRunning) { Start-InstalledClient }
 [pscustomobject]@{Installed=$exePath;Version=$version;Backup=$backupDir;SHA256=$sourceHash;Restarted=($Restart -or $wasRunning)} | ConvertTo-Json

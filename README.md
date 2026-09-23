@@ -8,7 +8,7 @@ Install Rust and Visual Studio C++ Build Tools, then run `scripts\build-and-test
 
 Run the JavaScript checks with `node --test tests/cleanup-static.test.mjs`.
 
-Browser regression checks use an isolated synthetic fixture through `cloak-browse`. The runner in `tests/cleanup-browser.py` covers promo cleanup, protected player and consent controls, dynamic updates, idle/background inactivity, restore, settings and mutation batching. It does not access a SoundCloud account.
+Browser regression checks use an isolated synthetic fixture through `cloak-browse`. The runner in `tests/cleanup_browser.py` covers promo cleanup, protected player and consent controls, dynamic updates, idle/background inactivity, restore, settings and mutation batching. It does not access a SoundCloud account.
 
 ## Behavior
 
