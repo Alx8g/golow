@@ -3,10 +3,11 @@
 mod discord;
 mod filter;
 mod instance;
+mod lastfm;
 mod policy;
 mod settings;
 
-use settings::{read_json, write_json, Message, Settings, WindowState};
+use settings::{read_json, write_json, Message, NowPlaying, Settings, WindowState};
 use std::{
     cell::{Cell, RefCell},
     io::Write,
@@ -37,7 +38,7 @@ const SAVE_DELAY: Duration = Duration::from_millis(350);
 #[derive(Clone, Debug)]
 enum Action {
     Settings(Settings),
-    Now(Option<String>),
+    Now(NowPlaying),
     PageLoaded,
     ClosePopup(WindowId),
     Show,
@@ -96,6 +97,12 @@ fn apply_window(
             window.set_min_inner_size(Some(LogicalSize::new(360.0, 400.0)));
             window.set_inner_size(*normal);
         }
+    }
+}
+
+fn scrobble(lastfm: &Option<std::sync::mpsc::Sender<lastfm::Event>>, event: lastfm::Event) {
+    if let Some(lastfm) = lastfm {
+        let _ = lastfm.send(event);
     }
 }
 
@@ -194,11 +201,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut context = WebContext::new(Some(dir.join("webview")));
     let script = format!(
-        "window.__scInitialSettings={};\n{}",
+        "window.__scInitialSettings={};window.__scLastfm={};\n{}",
         serde_json::to_string(&prefs)?,
+        lastfm::KEY.is_some(),
         include_str!("client.js")
     );
     let discord = discord::start(discord::APP_ID);
+    let lastfm = lastfm::KEY.map(|key| lastfm::start(key, dir.clone()));
+    if prefs.lastfm {
+        scrobble(&lastfm, lastfm::Event::Connect);
+    }
     let popups: Rc<RefCell<Vec<Popup>>> = Rc::default();
     let (popup_store, ipc_proxy, load_proxy, log_dir) =
         (popups.clone(), proxy.clone(), proxy.clone(), dir.clone());
@@ -214,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if request.body().len() <= 4096 && policy::soundcloud_page(&request.uri().to_string()) {
                 let _ = ipc_proxy.send_event(match serde_json::from_str(request.body()) {
                     Ok(Message::Settings(next)) => Action::Settings(next),
-                    Ok(Message::Now(now)) => Action::Now(now.now),
+                    Ok(Message::Now(now)) => Action::Now(now),
                     Err(_) => return,
                 });
             }
@@ -275,7 +287,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut exit = false;
         match event {
             Event::UserEvent(Action::Now(now)) => {
-                now_playing = now.map(|title| title.chars().take(200).collect());
+                if prefs.lastfm {
+                    scrobble(
+                        &lastfm,
+                        match &now.now {
+                            Some(_) => {
+                                let (artist, title) = lastfm::split(&now.artist, &now.title);
+                                lastfm::Event::Playing { artist, title, seconds: now.seconds }
+                            }
+                            None => lastfm::Event::Paused,
+                        },
+                    );
+                }
+                now_playing = now.now.map(|title| title.chars().take(200).collect());
                 if prefs.discord {
                     let _ = discord.send(now_playing.clone());
                 }
@@ -308,6 +332,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_background(&view, minimized, prefs.efficiency);
             }
             Event::UserEvent(Action::Settings(next)) => {
+                if next.lastfm != prefs.lastfm {
+                    scrobble(
+                        &lastfm,
+                        if next.lastfm { lastfm::Event::Connect } else { lastfm::Event::Paused },
+                    );
+                }
                 if next.discord != prefs.discord {
                     let _ = discord.send(now_playing.clone().filter(|_| next.discord));
                 }
@@ -362,6 +392,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 popups.borrow_mut().retain(|p| p.window.id() != window_id)
             }
             _ => {}
+        }
+        // A scrobble that is due goes out before the app exits.
+        if let (true, Some(lastfm)) = (exit && prefs.lastfm, &lastfm) {
+            let (done, flushed) = std::sync::mpsc::channel();
+            if lastfm.send(lastfm::Event::Quit(done)).is_ok() {
+                let _ = flushed.recv_timeout(Duration::from_secs(3));
+            }
         }
         // Window-state writes wait for a pause in move/resize storms, and happen on close.
         if (exit || save_at.is_some_and(|at| Instant::now() >= at)) && win_state.valid() {
