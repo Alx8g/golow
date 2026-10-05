@@ -18,14 +18,23 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 ## What it does
 
-Settings live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`. There are four switches:
+**Less clutter.** Upsells and creator tools are gone: Try Artist Pro, Artist Studio, Upload, artist follow suggestions, app-store badges, footer links and banners that sell a plan. Liked tracks show an orange heart everywhere, including SoundCloud's redesigned track pages, and their waveforms render at full contrast. Pages use up to 1840 px on wide monitors, and below 1000 px the sidebar drops so narrow windows never scroll sideways.
 
-- **Clean up interface** hides upsells and listener-irrelevant modules: Try Artist Pro, Artist Studio, Upload, artist follow suggestions, app-store badges, footer links and banners that sell a plan. Exact CSS rules never touch the player, forms, dialogs or cookie consent. Below 1000 px wide the sidebar drops and SoundCloud's fixed 960 px layout reflows, so narrow windows need no horizontal scrolling. Scrollbars follow the dark theme.
-- **Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
-- **Mini player** shrinks the window to SoundCloud's control bar: previous, play, next, progress and the current track. The expand button on the right returns to the full window.
-- **Keep on top** pins the window above others, which pairs well with the mini player.
+**Listening.**
+- Shuffle all on Likes plays every like in a truly random order. SoundCloud's own queue only ever holds about 27 tracks, which is why its shuffle repeats the same few; GoLow keeps the order itself and plays each pick through SoundCloud's player while the Likes page stays open.
+- A filter box on Likes searches every like, not just the ones loaded.
+- Next to the Feed's Reposts switch, Mixes hides anything over 20 minutes and Played hides tracks you have already heard.
+- Pressing play after a restart picks up where you left off.
+- Turning autoplay off stays off, instead of SoundCloud switching it back on each track.
+- The mouse wheel over the speaker icon changes volume. Keyboard media keys and the Windows media overlay work as usual.
 
-Keyboard media keys and the Windows media overlay work through WebView2. GoLow remembers window size and position, restores the existing window instead of opening a second copy, and allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub). Add `?noclean` to a SoundCloud URL to load one page without cleanup.
+**The window.** The title shows the playing track, so the taskbar does too. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
+
+**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`: Clean up interface, Reduce background work, Mini player, Keep on top, Waveform comments, Top comments first, Autoplay related tracks, and Discord status when built with a Discord application ID. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
+
+**Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
+
+GoLow allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub). SoundCloud requires signing in before anything plays.
 
 ## Install
 
@@ -48,6 +57,8 @@ cargo build --release              # target\release\golow.exe
 cargo test
 node --test tests/client.test.mjs  # page script tests, uses headless Edge
 ```
+
+Discord status needs a Discord application ID: create an application at the [Discord developer portal](https://discord.com/developers/applications) and build with `GOLOW_DISCORD_APP_ID` set to its ID. Without it, the switch is hidden and nothing connects to Discord.
 
 `uv run scripts/benchmark.py --exe old=path\to\old.exe --exe new=target\release\golow.exe --cdp` compares builds on startup, CPU and memory, using throwaway profiles under `.working\bench`. Set `GOLOW_PROFILE_DIR` to run the app against a separate profile while testing.
 
