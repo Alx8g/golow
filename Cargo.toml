@@ -1,7 +1,11 @@
 [package]
-name = "soundcloud-go-client"
+name = "golow"
 version = "0.1.6"
 edition = "2021"
+description = "A fast, low-overhead unofficial desktop client for SoundCloud on Windows"
+license = "MIT"
+repository = "https://github.com/Alx8g/golow"
+publish = false
 
 [dependencies]
 tao = "0.37"
@@ -12,6 +16,7 @@ serde_json = "1"
 url = "2"
 
 [build-dependencies]
+embed-resource = "3.0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -1,87 +1,32 @@
+# Installs GoLow for the current user, adds Start menu and desktop shortcuts and an uninstall entry.
 param(
-    [string]$BuildPath = (Join-Path $PSScriptRoot 'target\release\soundcloud-go-client.exe'),
-    [switch]$Restart,
-    [string]$ExpectedCurrentHash
+    [string]$Exe = $(if (Test-Path "$PSScriptRoot\golow.exe") { "$PSScriptRoot\golow.exe" } else { "$PSScriptRoot\target\release\golow.exe" }),
+    [switch]$Restart
 )
 $ErrorActionPreference = 'Stop'
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\SoundCloudGoPlus'
-$exePath = Join-Path $installDir 'soundcloud-go-client.exe'
-function Start-InstalledClient {
-    # WMI owns this desktop process, independent of an invoking terminal's job object.
-    $launch = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine=('"'+$exePath+'"'); CurrentDirectory=$installDir
-    }
-    if ($launch.ReturnValue -ne 0) { throw ('App launch failed: '+$launch.ReturnValue) }
+$dir = Join-Path $env:LOCALAPPDATA 'Programs\GoLow'
+$target = Join-Path $dir 'golow.exe'
+$version = (Get-Item -LiteralPath $Exe).VersionInfo.FileVersion
+if (-not $version) { throw "$Exe has no embedded version. Build it with: cargo build --release" }
+# Close a running copy the way its close button would. Never force-kill: that can damage the profile.
+$running = @(Get-Process golow -ErrorAction SilentlyContinue | Where-Object Path -eq $target)
+foreach ($p in $running) {
+    [void]$p.CloseMainWindow()
+    if (-not $p.WaitForExit(15000)) { throw 'GoLow did not close within 15 seconds. Close it and retry.' }
 }
-if (-not (Test-Path -LiteralPath $BuildPath)) { throw "Build missing: $BuildPath" }
-$sourceHash = (Get-FileHash -LiteralPath $BuildPath -Algorithm SHA256).Hash
-$version = (Get-Item -LiteralPath $BuildPath).VersionInfo.FileVersion
-if (-not $version) { throw 'Build has no embedded version metadata.' }
-if ($ExpectedCurrentHash -and (Test-Path -LiteralPath $exePath)) {
-    if ((Get-FileHash -LiteralPath $exePath).Hash -ne $ExpectedCurrentHash) { throw 'Installed app changed since inspection. Installation stopped.' }
-}
-New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-$backupDir = Join-Path $installDir "rollback\$stamp"
-New-Item -ItemType Directory -Path $backupDir | Out-Null
-$staged = Join-Path $backupDir 'new-build.exe'
-Copy-Item -LiteralPath $BuildPath -Destination $staged
-if ((Get-FileHash -LiteralPath $staged).Hash -ne $sourceHash) { throw 'Staged build hash mismatch.' }
-Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public static class SoundCloudInstallerWindow {
-    public delegate bool EnumProc(IntPtr h, IntPtr p);
-    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr p);
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-    public static bool Close(uint pid) {
-        IntPtr found=IntPtr.Zero;
-        EnumWindows((h,p)=>{uint owner;GetWindowThreadProcessId(h,out owner);if(owner==pid){var name=new StringBuilder(128);GetClassName(h,name,128);if(name.ToString()=="Window Class"){found=h;return false;}}return true;},IntPtr.Zero);
-        return found!=IntPtr.Zero && PostMessage(found,0x0010,IntPtr.Zero,IntPtr.Zero);
-    }
-}
-'@
-$running = @(Get-Process -Name 'soundcloud-go-client' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exePath })
-$wasRunning = $running.Count -gt 0
-foreach ($process in $running) {
-    if (-not [SoundCloudInstallerWindow]::Close($process.Id)) { throw 'Could not request a graceful close. Close the app and retry.' }
-    if (-not $process.WaitForExit(15000)) { throw 'App did not close within 15 seconds. It was not force-killed.' }
-}
-$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SoundCloudGoPlus'
-$previousVersion = if (Test-Path $reg) { (Get-ItemProperty $reg).DisplayVersion } else { $null }
-$oldHash = if (Test-Path $exePath) { (Get-FileHash $exePath).Hash } else { $null }
-[pscustomobject]@{version=$previousVersion;old_hash=$oldHash;new_hash=$sourceHash;installed_at=[DateTimeOffset]::Now.ToString('o')} |
-    ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $backupDir 'manifest.json')
-if (Test-Path -LiteralPath $exePath) { Move-Item -LiteralPath $exePath -Destination (Join-Path $backupDir 'soundcloud-go-client.exe') }
-try {
-    Move-Item -LiteralPath $staged -Destination $exePath
-    if ((Get-FileHash -LiteralPath $exePath).Hash -ne $sourceHash) { throw 'Installed hash mismatch.' }
-} catch {
-    if (Test-Path (Join-Path $backupDir 'soundcloud-go-client.exe')) {
-        if (Test-Path $exePath) { Move-Item -LiteralPath $exePath -Destination (Join-Path $backupDir 'failed-new-build.exe') }
-        Copy-Item (Join-Path $backupDir 'soundcloud-go-client.exe') $exePath
-        if ($wasRunning) { Start-InstalledClient }
-    }
-    throw
-}
-foreach ($name in @('icon.ico','uninstall.ps1')) {
-    $source = if ($name -eq 'icon.ico') { Join-Path $PSScriptRoot 'assets\icon.ico' } else { Join-Path $PSScriptRoot $name }
-    if (-not (Test-Path (Join-Path $installDir $name))) { Copy-Item -LiteralPath $source -Destination (Join-Path $installDir $name) }
-}
+New-Item -ItemType Directory -Force $dir | Out-Null
+# The previous build stays next to the new one, so a bad update can be rolled back by hand.
+if (Test-Path $target) { Copy-Item -Force $target "$dir\golow.previous.exe" }
+Copy-Item -Force $Exe $target
+Copy-Item -Force "$PSScriptRoot\assets\icon.ico", "$PSScriptRoot\uninstall.ps1" $dir
 $shell = New-Object -ComObject WScript.Shell
-foreach ($shortcut in @((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\SoundCloud Go+.lnk'),(Join-Path ([Environment]::GetFolderPath('Desktop')) 'SoundCloud Go+.lnk'))) {
-    if (-not (Test-Path $shortcut)) {
-        $s = $shell.CreateShortcut($shortcut); $s.TargetPath=$exePath; $s.WorkingDirectory=$installDir
-        $s.IconLocation=Join-Path $installDir 'icon.ico'; $s.Description='SoundCloud Go+'; $s.Save()
-    }
+foreach ($link in "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\GoLow.lnk", "$([Environment]::GetFolderPath('Desktop'))\GoLow.lnk") {
+    $s = $shell.CreateShortcut($link); $s.TargetPath = $target; $s.WorkingDirectory = $dir; $s.IconLocation = "$dir\icon.ico"; $s.Save()
 }
-New-Item -Path $reg -Force | Out-Null
-@{DisplayName='SoundCloud Go+';DisplayVersion=$version;Publisher='Lambiiz';InstallLocation=$installDir;DisplayIcon=(Join-Path $installDir 'icon.ico');UninstallString="powershell.exe -ExecutionPolicy Bypass -File `"$installDir\uninstall.ps1`""}.GetEnumerator() |
-    ForEach-Object { Set-ItemProperty -Path $reg -Name $_.Key -Value $_.Value }
-Set-ItemProperty -Path $reg -Name NoModify -Value 1 -Type DWord
-Set-ItemProperty -Path $reg -Name NoRepair -Value 1 -Type DWord
-if ($Restart -or $wasRunning) { Start-InstalledClient }
-[pscustomobject]@{Installed=$exePath;Version=$version;Backup=$backupDir;SHA256=$sourceHash;Restarted=($Restart -or $wasRunning)} | ConvertTo-Json
+$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GoLow'
+New-Item -Force $reg | Out-Null
+@{ DisplayName = 'GoLow'; DisplayVersion = $version; Publisher = 'GoLow'; InstallLocation = $dir; DisplayIcon = "$dir\icon.ico"; NoModify = 1; NoRepair = 1
+   UninstallString = "powershell.exe -ExecutionPolicy Bypass -File `"$dir\uninstall.ps1`"" }.GetEnumerator() | ForEach-Object { Set-ItemProperty $reg $_.Key $_.Value }
+# Launch through WMI so the app outlives the terminal (and any job object) that ran this script.
+if ($Restart -or $running) { Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{ CommandLine = "`"$target`""; CurrentDirectory = $dir } | Out-Null }
+"Installed GoLow $version to $dir"
