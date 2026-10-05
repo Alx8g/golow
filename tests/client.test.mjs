@@ -165,7 +165,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 10, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 11, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
@@ -180,7 +180,7 @@ const checks = `(async () => {
 
   byId('play').classList.add('playing');
   await wait(0);
-  assert(sent().now === 'Track – Artist', 'reports the playing track');
+  assert(sent().now === 'Track – Artist' && sent().artist === 'Artist' && sent().title === 'Track', 'reports the playing track and its parts');
   byId('play').classList.remove('playing');
   await wait(0);
   assert(sent().now === null, 'reports pause');
