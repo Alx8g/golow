@@ -25,11 +25,18 @@
   const guarded = ':not(html,body,#root,#app,#main,#__next):not(:is('+protectedSelector+')):not(:has('+protectedSelector+')):not(:is(.playControls *,.waveform *,.playbackTimeline *))';
   const promoCss = explicitSelectors.map(selector=>'html[data-sc-cleanup] '+selector+guarded).join(',')+'{display:none!important}';
   const bannerSelector = '.announcementBanner,.announcementBanner__content';
+  // Playlist tiles keep a SMIL buffering spinner inside a play button that stays
+  // hidden until hover. Hidden SMIL still forces style and layout every frame, so
+  // stop rendering it exactly while SoundCloud's own rules keep the button hidden.
+  const idleSpinnerCss = ['.playableTile[data-playbutton="never"] .playableTile__playButton',
+    '.playableTile[data-playbutton="hover"]:not(.m-playing) .playableTile__artwork:not(:hover) .playableTile__playButton:not(.forceVisibility)']
+    .map(button=>'html[data-sc-efficiency] '+button+' svg:has(animate,animateTransform)').join(',')+'{display:none!important}';
   const marked = new Set(), pending = new Set();
   let observer=null, timer=null, style=null, host=null, shadow=null, nativeHidden=false;
   let fullScanNeeded=true, status=null, settingsBuilt=false;
   const counters={scans:0,mutations:0,candidates:0};
   const visible=()=>!document.hidden&&!nativeHidden;
+  const markRoot=()=>{const root=document.documentElement;root.toggleAttribute('data-sc-cleanup',cleanupEnabled());root.toggleAttribute('data-sc-efficiency',!!settings.efficiency);};
   const cleanupEnabled=()=>settings.cleanup&&!recovery;
   const send=value=>{if(window.ipc&&typeof window.ipc.postMessage==='function')window.ipc.postMessage(JSON.stringify(value));};
   const cacheSettings=()=>{try{const value=JSON.stringify(settings);if(localStorage.getItem('sc-client-settings-v1')!==value)localStorage.setItem('sc-client-settings-v1',value);}catch{}};
@@ -45,7 +52,7 @@
   function installStyle(){
     if(style||!document.documentElement)return;
     style=document.createElement('style');style.id='sc-client-style';
-    style.textContent=promoCss+'html[data-sc-cleanup] [data-sc-client-hidden]{display:none!important}';
+    style.textContent=promoCss+idleSpinnerCss+'html[data-sc-cleanup] [data-sc-client-hidden]{display:none!important}';
     (document.head||document.documentElement).appendChild(style);
   }
   function scan(root){
@@ -74,7 +81,7 @@
   }
   function refreshLifecycle(){
     installStyle();
-    document.documentElement?.toggleAttribute('data-sc-cleanup',cleanupEnabled());
+    if(document.documentElement)markRoot();
     stop();
     if(!cleanupEnabled()){
       for(const el of marked)el.removeAttribute('data-sc-client-hidden');marked.clear();fullScanNeeded=true;return;
@@ -150,7 +157,7 @@
       shadow.getElementById(key).addEventListener('change', event => {
         settings[key] = event.target.checked;
         cacheSettings();
-        if (key === 'cleanup') { fullScanNeeded = true; refreshLifecycle(); }
+        if (key === 'cleanup') { fullScanNeeded = true; refreshLifecycle(); } else if (key === 'efficiency') markRoot();
         send({type:'settings', value:settings});
       });
     }
@@ -173,7 +180,7 @@
   });
   function initializeDocument(){
     if(!document.documentElement)return false;
-    preconnect();installStyle();document.documentElement.toggleAttribute('data-sc-cleanup',cleanupEnabled());return true;
+    preconnect();installStyle();markRoot();return true;
   }
   if(!initializeDocument()){
     const rootReady=new MutationObserver(()=>{if(initializeDocument())rootReady.disconnect();});
