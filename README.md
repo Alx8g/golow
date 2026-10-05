@@ -1,41 +1,56 @@
-# SoundCloud Go+
+# GoLow
 
-A small Windows Rust wrapper around the official SoundCloud website using the shared Evergreen WebView2 runtime. It preserves SoundCloud authentication and normal DRM playback. It does not download protected streams or change subscription entitlements.
+GoLow is a small, fast, unofficial desktop client for SoundCloud on Windows. It runs the real soundcloud.com in the WebView2 runtime that ships with Windows, so sign-in, Go+ playback and DRM work exactly as they do in Edge, and it trims the work SoundCloud's page does that you never see.
 
-## Build and verify
+GoLow is not affiliated with or endorsed by SoundCloud. It does not download streams, unlock paid features or change what your subscription includes.
 
-Install Rust and Visual Studio C++ Build Tools, then run `scripts\build-and-test.cmd`. This runs formatting checks, Rust unit tests, Clippy and a release build.
+## Performance
 
-Run the JavaScript checks with `node --test tests/cleanup-static.test.mjs`.
+Measured with `scripts/benchmark.py` against the last SoundCloud Go+ build, idle on the logged-out Discover page, 10 runs per build across two sessions on a Windows 11 PC with a 180 Hz display:
 
-Browser regression checks use an isolated synthetic fixture through `cloak-browse`. The runner in `tests/cleanup_browser.py` covers promo cleanup, protected player and consent controls, dynamic updates, idle/background inactivity, restore, settings and mutation batching. It does not access a SoundCloud account.
+| Window visible, idle | SoundCloud Go+ 0.1.6 | GoLow |
+|---|---|---|
+| CPU, share of one core | 9 to 34% | 0.9 to 3.6% |
+| Page layout and style work | 6 to 32 ms every second | none |
+| Private memory, all processes | 353 to 532 MiB | 321 to 384 MiB |
 
-## Behavior
+Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering icon that spins forever, and Chromium redoes the page layout for it on every display refresh, so faster screens pay more. GoLow stops rendering that icon only while SoundCloud itself keeps it hidden. Minimized, both builds idle near 1% of one core.
 
-- Standard WebView2 background throttling and hardware acceleration stay enabled.
-- Before the first navigation, narrow native filters cancel the hidden Artist Tools frame navigation and return empty responses for exact advertising and tracking bootstrap files observed in profiling, including the ad-auction, Google publisher, Amazon advertising, Facebook pixel and TikTok pixel entry points. A document-response filter is also registered, but service-worker and cached responses can bypass resource interception. Live checks prove the Artist Tools frame executes zero scripts. Advertising responses were replaced with empty bodies in some runs, while a cached Reddit pixel response still appeared in another run. This is not a complete tracker blocker or a guarantee that every associated byte avoids download. Exact host/path checks preserve audio/CDN traffic, consent, OAuth, security scripts and the standby player. Cleanup and efficiency toggles control these filters. Reload applies request-filter changes to already loaded pages.
-- Minimized windows request a low memory target, hide the WebView controller and disconnect cleanup work. The renderer is not suspended, so audio remains eligible to play.
-- Exact guarded CSS hides known promotions before their first paint, including dynamically inserted ones. Text-based fallback watches only header/announcement containers, not the full feed or player. There is no periodic sweep, text-tree walk, geometry scan or automatic dismissal click. The exact Artist Tools iframe host is hidden, while the separate New Tracks module remains visible.
-- Startup uses a predecoded icon and a speed-optimized release build. Three first-party API/CDN origins receive connection warmup hints. There is no always-running prewarm daemon and no cache clearing.
-- The settings panel is created only when opened. Cache-size scanning runs on a worker, never the UI thread, with one in-flight scan and a 60-second result cache.
-- App settings control cleanup, minimized memory reduction, compact mode and always-on-top. `Ctrl+,` opens settings. The audio-quality link goes to SoundCloud's own streaming settings. Selecting Go+ is not proof that high-quality playback is enabled.
-- Exact parsed HTTPS hosts are checked for top-level navigation and managed login popups. Popup redirects are checked too. Native messages are limited to settings and cache status from SoundCloud's UI origin.
-- Relaunching the same profile restores the existing app instead of opening another process tree.
-- Window-state writes wait for 350 ms of inactivity and occur on close. Minimized and maximized geometry does not replace normal window size.
-- Startup logging contains timings, not visited URLs or login tokens. DevTools are disabled in release builds.
+## What it does
 
-## Install and rollback
+- Hides known upsell and promotion banners with exact CSS rules that never touch the player, forms, dialogs or cookie consent.
+- Skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
+- Stops SoundCloud's always-spinning hidden buffering icons from forcing a page layout on every display refresh.
+- Asks WebView2 for a low memory target while minimized. Playback keeps running.
+- Remembers window size and position, restores the existing window instead of opening a second copy, and offers compact and always-on-top modes.
+- Allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub).
 
-After building, run `powershell -ExecutionPolicy Bypass -File install.ps1 -Restart`. The installer requests a graceful close, retains the previous executable under the installed app's `rollback` directory, verifies hashes, then launches the replacement. It does not delete login data or caches. If graceful close fails, it stops rather than force-killing the app.
+Press `Ctrl+,` or the App settings button for options. Each optimisation can be turned off there. Add `?noclean` to a SoundCloud URL to load one page with cleanup disabled.
 
-The per-user app is installed under `%LOCALAPPDATA%\Programs\SoundCloudGoPlus`. Its profile remains at `%APPDATA%\soundcloud-go-client` to avoid migrating existing authentication or DRM state. The profile and settings are never committed.
+## Install
 
-For rollback, close the app, preserve the current executable under a new name, restore the retained executable and restart. Do not overwrite or delete a running executable. The original uninstall script removes the install folder, including rollback files, but intentionally preserves the profile.
+Download `golow-windows-x64.zip` from [Releases](https://github.com/Alx8g/golow/releases), extract it and run:
 
-## Development profile
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Restart
+```
 
-`SOUNDCLOUD_PROFILE_DIR` selects a separate profile root for manual tests. Never point test automation at another user's browser profile. Production needs no debugging port. Tests and reports belong in ignored `.working/` directories.
+This installs to `%LOCALAPPDATA%\Programs\GoLow` with Start menu and desktop shortcuts and an entry in Installed apps. The previous build is kept as `golow.previous.exe`. You can also run `golow.exe` directly without installing. The executable is not code-signed yet, so SmartScreen may warn on first launch.
 
-## Scope
+Your sign-in and settings live in `%APPDATA%\golow`. Builds released as SoundCloud Go+ used `%APPDATA%\soundcloud-go-client`, and GoLow keeps using that folder when it exists, so you stay signed in. Uninstalling keeps this folder.
 
-This app cannot control SoundCloud's server code or certify stream quality from a subscription label. Resource savings must be measured with comparable page, playback and visibility states. Keeping cache generally improves loading. Build artifacts may be cleaned separately after preserving a tested release, but are not runtime memory usage.
+## Build from source
+
+Requires Rust (MSVC toolchain), the Visual Studio C++ build tools and Node.js 22 or later.
+
+```powershell
+cargo build --release              # target\release\golow.exe
+cargo test
+node --test tests/client.test.mjs  # page script tests, uses headless Edge
+```
+
+`uv run scripts/benchmark.py --exe old=path\to\old.exe --exe new=target\release\golow.exe --cdp` compares builds on startup, CPU and memory, using throwaway profiles under `.working\bench`. Set `GOLOW_PROFILE_DIR` to run the app against a separate profile while testing.
+
+## License
+
+[MIT](LICENSE). SoundCloud and Go+ are trademarks of SoundCloud.
