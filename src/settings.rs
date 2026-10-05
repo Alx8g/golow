@@ -17,7 +17,7 @@ pub struct Settings {
     pub played: bool,
     /// Comments on redesigned track pages ordered by likes.
     pub top_comments: bool,
-    /// "Listening to" status in Discord, when built with an application ID.
+    /// "Listening to" status in Discord. Opt-in: it shares what is playing.
     pub discord: bool,
 }
 
@@ -33,7 +33,7 @@ impl Default for Settings {
             mixes: true,
             played: true,
             top_comments: false,
-            discord: true,
+            discord: false,
         }
     }
 }

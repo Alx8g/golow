@@ -194,12 +194,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut context = WebContext::new(Some(dir.join("webview")));
     let script = format!(
-        "window.__scInitialSettings={};window.__scDiscord={};\n{}",
+        "window.__scInitialSettings={};\n{}",
         serde_json::to_string(&prefs)?,
-        discord::APP_ID.is_some(),
         include_str!("client.js")
     );
-    let discord = discord::APP_ID.map(discord::start);
+    let discord = discord::start(discord::APP_ID);
     let popups: Rc<RefCell<Vec<Popup>>> = Rc::default();
     let (popup_store, ipc_proxy, load_proxy, log_dir) =
         (popups.clone(), proxy.clone(), proxy.clone(), dir.clone());
@@ -277,7 +276,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match event {
             Event::UserEvent(Action::Now(now)) => {
                 now_playing = now.map(|title| title.chars().take(200).collect());
-                if let (Some(discord), true) = (&discord, prefs.discord) {
+                if prefs.discord {
                     let _ = discord.send(now_playing.clone());
                 }
                 let title = now_playing.as_ref().map(|now| format!("{now} · {APP_NAME}"));
@@ -309,7 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_background(&view, minimized, prefs.efficiency);
             }
             Event::UserEvent(Action::Settings(next)) => {
-                if let (Some(discord), true) = (&discord, next.discord != prefs.discord) {
+                if next.discord != prefs.discord {
                     let _ = discord.send(now_playing.clone().filter(|_| next.discord));
                 }
                 apply_window(&window, next, prefs, &mut normal_size);

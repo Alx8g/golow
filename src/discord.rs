@@ -1,5 +1,4 @@
-//! "Listening to" status over Discord's local IPC pipe. Needs a Discord application ID,
-//! set at build time with GOLOW_DISCORD_APP_ID; without one the feature is absent.
+//! "Listening to" status over Discord's local IPC pipe, shown as GoLow's Discord application.
 use serde_json::{json, Value};
 use std::{
     fs::{File, OpenOptions},
@@ -9,7 +8,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub const APP_ID: Option<&str> = option_env!("GOLOW_DISCORD_APP_ID");
+/// Application IDs are public. Forks can build with their own via GOLOW_DISCORD_APP_ID.
+pub const APP_ID: &str = match option_env!("GOLOW_DISCORD_APP_ID") {
+    Some(id) => id,
+    None => "1556798456515928084",
+};
 
 fn frame(op: u32, body: &Value) -> Vec<u8> {
     let body = body.to_string();
@@ -52,26 +55,38 @@ pub fn connect(app_id: &str) -> io::Result<File> {
     Err(last)
 }
 
+/// Sets or clears the status and returns Discord's reply.
+fn set_activity(pipe: &mut File, now: Option<&str>, nonce: usize) -> io::Result<Value> {
+    let started = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let activity = now.map_or(
+        Value::Null,
+        |title| json!({"type": 2, "details": title, "timestamps": {"start": started}}),
+    );
+    let args = json!({"pid": std::process::id(), "activity": activity});
+    pipe.write_all(&frame(
+        1,
+        &json!({"cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string()}),
+    ))?;
+    let (_, body) = reply(pipe)?;
+    match body["evt"].as_str() {
+        Some("ERROR") => Err(io::Error::other(body["data"].to_string())),
+        _ => Ok(body),
+    }
+}
+
 /// Mirrors now-playing to Discord on a worker thread; send `None` to clear the status.
 pub fn start(app_id: &'static str) -> Sender<Option<String>> {
     let (sender, updates) = channel::<Option<String>>();
     thread::spawn(move || {
         let mut pipe = None;
         for (nonce, now) in updates.into_iter().enumerate() {
-            let started = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
-            let activity = now.map_or(
-                Value::Null,
-                |title| json!({"type": 2, "details": title, "timestamps": {"start": started}}),
-            );
-            let message = json!({"cmd": "SET_ACTIVITY", "args": {"pid": std::process::id(), "activity": activity}, "nonce": nonce.to_string()});
             if pipe.is_none() {
                 pipe = connect(app_id).ok();
             }
-            // A failed write means Discord restarted or quit; reconnect on the next update.
-            if let Some(open) = &mut pipe {
-                if open.write_all(&frame(1, &message)).and_then(|()| reply(open)).is_err() {
-                    pipe = None;
-                }
+            // A failure means Discord restarted or quit; reconnect on the next update.
+            if pipe.as_mut().is_some_and(|open| set_activity(open, now.as_deref(), nonce).is_err())
+            {
+                pipe = None;
             }
         }
     });
@@ -98,5 +113,16 @@ mod tests {
             error.to_string().contains("client_id") || error.to_string().contains("Invalid"),
             "{error}"
         );
+    }
+
+    /// Needs Discord running locally. Shows a test status for a moment, then clears it.
+    #[test]
+    #[ignore]
+    fn discord_accepts_golow_and_shows_a_listening_status() {
+        let mut pipe = connect(APP_ID).expect("GoLow's application is accepted");
+        let shown =
+            set_activity(&mut pipe, Some("GoLow test - please ignore"), 0).expect("status set");
+        assert_eq!(shown["data"]["type"], 2, "{shown}");
+        set_activity(&mut pipe, None, 1).expect("status cleared");
     }
 }

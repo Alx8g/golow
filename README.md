@@ -30,7 +30,7 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 **The window.** The title shows the playing track, so the taskbar does too. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
 
-**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`: Clean up interface, Reduce background work, Mini player, Keep on top, Waveform comments, Top comments first, Autoplay related tracks, and Discord status when built with a Discord application ID. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
+**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`: Clean up interface, Reduce background work, Mini player, Keep on top, Waveform comments, Top comments first, Autoplay related tracks, and Discord status, which shows what you are listening to on your Discord profile and is off until you switch it on. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
 
 **Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
 
@@ -58,7 +58,7 @@ cargo test
 node --test tests/client.test.mjs  # page script tests, uses headless Edge
 ```
 
-Discord status needs a Discord application ID: create an application at the [Discord developer portal](https://discord.com/developers/applications) and build with `GOLOW_DISCORD_APP_ID` set to its ID. Without it, the switch is hidden and nothing connects to Discord.
+Discord status appears as GoLow's Discord application. A fork can use its own by creating an application at the [Discord developer portal](https://discord.com/developers/applications) and building with `GOLOW_DISCORD_APP_ID` set to its ID.
 
 `uv run scripts/benchmark.py --exe old=path\to\old.exe --exe new=target\release\golow.exe --cdp` compares builds on startup, CPU and memory, using throwaway profiles under `.working\bench`. Set `GOLOW_PROFILE_DIR` to run the app against a separate profile while testing.
 

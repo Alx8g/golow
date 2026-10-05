@@ -4,10 +4,10 @@
       !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)) return;
   if (window.__scClient) return;
 
-  const PANEL = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'top_comments', 'autoplay', ...window.__scDiscord ? ['discord'] : []];
-  const KEYS = [...new Set([...PANEL, 'mixes', 'played', 'discord'])];
+  const PANEL = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'top_comments', 'autoplay', 'discord'];
+  const KEYS = [...PANEL, 'mixes', 'played'];
   const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true,
-    mixes: true, played: true, top_comments: false, discord: true}, window.__scInitialSettings);
+    mixes: true, played: true, top_comments: false, discord: false}, window.__scInitialSettings);
   // Same-origin preferences avoid briefly restoring old startup values on each
   // full navigation. Rust validates and owns the persisted native settings.
   try {
@@ -401,7 +401,7 @@
         <label>Waveform comments<input id="comments" type="checkbox" role="switch"></label>
         <label>Top comments first<input id="top_comments" type="checkbox" role="switch"></label>
         <label>Autoplay related tracks<input id="autoplay" type="checkbox" role="switch"></label>
-        ${window.__scDiscord ? '<label>Discord status<input id="discord" type="checkbox" role="switch"></label>' : ''}
+        <label>Discord status<input id="discord" type="checkbox" role="switch"></label>
         <p id="recovery" hidden>Cleanup is off for this page (noclean).</p>
         <a id="quality" href="https://soundcloud.com/settings/streaming">Audio quality<span aria-hidden="true">›</span></a>`;
       shadow.appendChild(panel);
