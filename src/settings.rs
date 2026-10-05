@@ -12,6 +12,9 @@ pub struct Settings {
     pub comments: bool,
     /// SoundCloud's autoplay station after the queue ends. Off stays off.
     pub autoplay: bool,
+    /// Feed items: mixes over 20 minutes, and tracks already played.
+    pub mixes: bool,
+    pub played: bool,
 }
 
 impl Default for Settings {
@@ -23,6 +26,8 @@ impl Default for Settings {
             always_on_top: false,
             comments: true,
             autoplay: true,
+            mixes: true,
+            played: true,
         }
     }
 }

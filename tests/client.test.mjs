@@ -49,6 +49,10 @@ const page = `<!doctype html><html><head></head><body><div id="app">
 <div class="playableTile" data-playbutton="hover"><div class="playableTile__artwork"><div class="playableTile__playButton" id="idle">${spinner}</div></div></div>
 <div class="playableTile m-playing" data-playbutton="hover"><div class="playableTile__artwork"><div class="playableTile__playButton" id="active">${spinner}</div></div></div>
 <iframe class="webiIframe" id="webi" src="/n/artist/track"></iframe>
+<div class="stream__filter" id="filters"><div class="streamFilter__item"><label>Reposts</label></div></div>
+<ul><li class="soundList__item" id="long"><a class="soundTitle__title" href="/a/long">Long mix</a></li>
+<li class="soundList__item" id="short"><a class="soundTitle__title" href="/a/short">Short track</a></li>
+<li class="soundList__item" id="heard"><a class="soundTitle__title" href="/a/played">Heard before</a></li></ul>
 </div><div class="l-sidebar-right" id="sidebar"><div class="whoToFollowModule" id="follow"></div><div class="mobileApps" id="mobile"></div>
 <div class="l-footer" id="footer">Legal</div><article class="artistShortcutsModule" id="new-tracks"><button aria-label="Play new track">Play</button></article></div></div></div>
 <div class="playControls" id="player"><section class="playControls__inner"><div class="playControls__wrapper l-container">
@@ -67,9 +71,36 @@ document.getElementById('show-queue').addEventListener('click', () => {
   document.getElementById('autoplay-input').addEventListener('click', () => { autoplayOn = !autoplayOn; document.getElementById('autoplay').classList.toggle('sc-toggle-on', autoplayOn); });
 });
 window.__autoplayOn = () => autoplayOn;
+for (const url of ['https://api-v2.soundcloud.com/stream?limit=10', 'https://api-v2.soundcloud.com/me/play-history/tracks?limit=25']) {
+  const request = new XMLHttpRequest();
+  request.open('GET', url);
+  request.send();
+}
 window.__newTrack = title => { autoplayOn = true; document.querySelector('.playbackSoundBadge__titleLink').title = title; };
 </script>
 </div></body></html>`;
+const likesPage = `<!doctype html><html><head></head><body><div id="app">
+<header class="header"><div class="header__right"><ul class="header__navMenu"><li>More</li></ul></div></header>
+<div class="collectionSection"><div class="collectionSection__top"><h2>Hear the tracks you have liked:</h2><div class="collectionSection__action">View</div></div>
+<div class="badgeList lazyLoadingList" id="list"></div></div>
+<div class="playControls"><div class="playControls__elements"><button class="shuffleControl m-shuffling" id="shuffle">Shuffle</button>
+<button class="playControls__next" id="next">Next</button><button class="playControls__play" id="play">Play</button>
+<div class="playbackTimeline__timePassed"><span aria-hidden="true" id="passed">0:00</span></div><div class="playbackTimeline__duration"><span aria-hidden="true" id="duration">3:00</span></div>
+<a class="playbackSoundBadge__titleLink" id="badge" title="" href=""></a><a class="playbackSoundBadge__lightLink" title="Artist"></a></div></div></div>
+<script>
+let loaded = 0;
+const list = document.getElementById('list');
+const more = () => { for (let i = 0; i < 24 && loaded < 60; i++, loaded++) list.insertAdjacentHTML('beforeend', '<li class="badgeList__item" style="height:120px"><a class="playableTile__artworkLink" href="/a/t' + loaded + '">Track ' + loaded + ' by ' + (loaded % 2 ? 'Odd' : 'Even') + '</a><button class="sc-button-play" data-n="' + loaded + '">Play</button></li>'); };
+// Playing a like or pressing next behaves like SoundCloud: the badge and play state follow.
+const start = n => { const badge = document.getElementById('badge'); badge.href = '/a/t' + n; badge.title = 'Track ' + n; document.getElementById('play').classList.add('playing'); window.__current = n; document.getElementById('passed').textContent = '0:01'; };
+more();
+addEventListener('scroll', () => { if (innerHeight + scrollY >= document.documentElement.scrollHeight - 50) setTimeout(more, 100); });
+document.getElementById('shuffle').addEventListener('click', event => event.target.classList.toggle('m-shuffling'));
+document.addEventListener('click', event => {
+  if (event.target.matches('.badgeList__item .sc-button-play')) start(Number(event.target.dataset.n));
+  if (event.target.id === 'next') start((window.__current + 1) % 60);
+});
+</script></body></html>`;
 // The redesigned track page: Material UI markup with stable aria labels only.
 const trackPage = `<!doctype html><html><head></head><body>
 <button aria-label="Unlike" id="liked">Liked</button><button aria-label="Like" id="unliked">Like</button>
@@ -123,7 +154,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 6, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 8, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
@@ -156,10 +187,60 @@ const checks = `(async () => {
   byId('play').classList.remove('playing');
   await wait(0);
 
+  for (const id of ['long', 'short', 'heard']) assert(!hidden(id), 'feed shows everything by default: ' + id);
+  const feedSwitch = key => document.querySelector('[data-golow="' + key + '"] input');
+  assert(feedSwitch('mixes') && feedSwitch('played') && feedSwitch('mixes').checked, 'feed switches sit next to Reposts');
+  feedSwitch('mixes').click();
+  assert(sent().mixes === false && hidden('long') && !hidden('short'), 'Mixes off hides tracks over 20 minutes');
+  feedSwitch('played').click();
+  assert(sent().played === false && hidden('heard') && !hidden('short'), 'Played off hides tracks from listening history');
+  client.update({mixes: true, played: true});
+  assert(!hidden('long') && !hidden('heard') && feedSwitch('mixes').checked, 'feed filters restore');
+
   client.update({cleanup: false, efficiency: false});
   assert(!hidden('promo') && !hidden('upsell') && !hidden('follow') && !hidden(spinner('idle')), 'toggles restore content');
   client.update({cleanup: true, efficiency: true});
   assert(hidden('promo') && hidden('follow') && hidden(spinner('idle')), 're-enable');
+  return 'ok';
+})()`;
+
+const likesChecks = `(async () => {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  for (let i = 0; i < 20 && !document.querySelector('[data-golow-tools]'); i++) await wait(50);
+  const [input, button] = document.querySelector('[data-golow-tools]').children;
+  assert(input && button, 'likes tools sit in the section header');
+  input.value = 'odd';
+  input.dispatchEvent(new Event('input'));
+  for (let i = 0; i < 100 && document.querySelectorAll('.badgeList__item').length < 60; i++) await wait(100);
+  await wait(2000);
+  const visible = [...document.querySelectorAll('.badgeList__item')].filter(item => getComputedStyle(item).display !== 'none');
+  assert(document.querySelectorAll('.badgeList__item').length === 60 && visible.length === 30 && visible.every(item => item.textContent.includes('Odd')), 'filter searches every like, not just the loaded ones');
+  input.value = '';
+  input.dispatchEvent(new Event('input'));
+  await wait(50);
+  assert([...document.querySelectorAll('.badgeList__item')].every(item => getComputedStyle(item).display !== 'none'), 'clearing the filter shows everything');
+  const client = window.__scClient, badge = () => document.getElementById('badge').getAttribute('href');
+  button.click();
+  for (let i = 0; i < 60 && !client.diagnostics().shuffle; i++) await wait(100);
+  await wait(50);
+  const first = client.diagnostics().shuffle;
+  assert(first && badge() === first && button.textContent === 'Stop shuffle', 'shuffle all starts its own random pick');
+  assert(!document.getElementById('shuffle').classList.contains('m-shuffling'), 'SoundCloud shuffle is switched off while GoLow shuffles');
+  const sequential = '/a/t' + ((window.__current + 1) % 60);
+  document.getElementById('next').click();
+  await wait(50);
+  const second = client.diagnostics().shuffle;
+  assert(second && second !== first && badge() === second, 'when SoundCloud advances on its own, the next random pick plays instead');
+  document.getElementById('passed').textContent = '2:59';
+  await wait(50);
+  const third = client.diagnostics().shuffle;
+  assert(third && third !== second && badge() === third, 'a second before the end, the next pick starts');
+  const picks = new Set([first, second, third]);
+  for (let i = 0; i < 57; i++) { document.getElementById('next').click(); await wait(5); picks.add(client.diagnostics().shuffle); }
+  assert(picks.size === 60 || client.diagnostics().shuffle === null, 'a round plays every like once');
+  button.click();
+  assert(client.diagnostics().shuffle === null && button.textContent === 'Shuffle all', 'stop shuffle');
   return 'ok';
 })()`;
 
@@ -171,11 +252,12 @@ const widthChecks = width => `(() => {
   return 'ok';
 })()`;
 
-test('cleans up, styles new track pages, places settings and runs the mini player in a real browser', {skip: !edge && 'Microsoft Edge not found'}, async () => {
+test('cleans up, styles new track pages, settings, mini player, feed filters and likes tools in a real browser', {skip: !edge && 'Microsoft Edge not found'}, async () => {
   // Keep the top-frame guard, drop the origin check: like WebView2 here, frames get no script.
   const fixture = script.replace(/location\.protocol !== 'https:' \|\|\s*!\['soundcloud\.com', 'www\.soundcloud\.com'\]\.includes\(location\.hostname\)/, 'false');
   assert.notEqual(fixture, script, 'origin guard replaced in the fixture copy only');
-  const server = http.createServer((req, res) => res.writeHead(200, {'content-type': 'text/html'}).end(req.url.startsWith('/n/') ? trackPage : page));
+  const server = http.createServer((req, res) => res.writeHead(200, {'content-type': 'text/html'})
+    .end(req.url.startsWith('/n/') ? trackPage : req.url.startsWith('/you/likes') ? likesPage : page));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'golow-test-'));
   const browser = spawn(edge, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank']);
@@ -188,7 +270,21 @@ test('cleans up, styles new track pages, places settings and runs the mini playe
     await new Promise((resolve, reject) => Object.assign(ws, {onopen: resolve, onerror: reject}));
     const replies = new Map();
     let id = 0;
-    ws.onmessage = ({data}) => { const message = JSON.parse(data); replies.get(message.id)?.(message.result); };
+    // SoundCloud's API answers come from here: a 60-minute mix, a short track, and history.
+    const api = {
+      '/stream': {collection: [{track: {permalink_url: 'https://soundcloud.com/a/long', duration: 3600000}},
+        {track: {permalink_url: 'https://soundcloud.com/a/short', duration: 200000}}, {track: {permalink_url: 'https://soundcloud.com/a/played', duration: 200000}}]},
+      '/me/play-history': {collection: [{track: {permalink_url: 'https://soundcloud.com/a/played'}}]},
+    };
+    ws.onmessage = ({data}) => {
+      const message = JSON.parse(data);
+      if (message.method === 'Fetch.requestPaused') {
+        const body = JSON.stringify(Object.entries(api).find(([key]) => message.params.request.url.includes(key))?.[1] || {});
+        ws.send(JSON.stringify({id: ++id, method: 'Fetch.fulfillRequest', params: {requestId: message.params.requestId, responseCode: 200,
+          responseHeaders: [{name: 'Content-Type', value: 'application/json'}, {name: 'Access-Control-Allow-Origin', value: '*'}], body: Buffer.from(body).toString('base64')}}));
+      }
+      replies.get(message.id)?.(message.result);
+    };
     const cdp = (method, params) => new Promise(resolve => {
       replies.set(++id, resolve);
       ws.send(JSON.stringify({id, method, params}));
@@ -204,19 +300,24 @@ test('cleans up, styles new track pages, places settings and runs the mini playe
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: 'window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};'});
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: fixture});
     await resize(1280);
-    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/`});
+    await cdp('Fetch.enable', {patterns: [{urlPattern: 'https://api-v2.soundcloud.com/*'}]});
+    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/feed`});
     for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete' || document.getElementById('webi').contentDocument?.readyState !== 'complete'"); i++) await sleep(100);
     assert.equal(await evaluate(checks), 'ok');
     for (const width of [700, 1700]) {
       await resize(width);
       assert.equal(await evaluate(widthChecks(width)), 'ok', `${width}px`);
     }
+    await resize(1280);
+    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/you/likes`});
+    for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete'"); i++) await sleep(100);
+    assert.equal(await evaluate(likesChecks), 'ok');
     ws.close();
   } finally {
     server.close();
     const exited = new Promise(resolve => browser.once('exit', resolve));
     browser.kill();
-    await exited;
+    await Promise.race([exited, sleep(5000)]);
     // Edge helpers can hold the temporary profile briefly after the browser exits.
     try { fs.rmSync(profile, {recursive: true, force: true, maxRetries: 20, retryDelay: 250}); } catch {}
   }

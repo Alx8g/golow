@@ -4,9 +4,9 @@
       !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)) return;
   if (window.__scClient) return;
 
-  const KEYS = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'autoplay'];
-  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true},
-    window.__scInitialSettings);
+  const PANEL = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'autoplay'], KEYS = [...PANEL, 'mixes', 'played'];
+  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true,
+    mixes: true, played: true}, window.__scInitialSettings);
   // Same-origin preferences avoid briefly restoring old startup values on each
   // full navigation. Rust validates and owns the persisted native settings.
   try {
@@ -14,6 +14,37 @@
     for (const key of KEYS) if (typeof cached[key] === 'boolean') settings[key] = cached[key];
   } catch {}
   const recovery = new URLSearchParams(location.search).has('noclean') || /(?:^#|[&#])noclean(?:[=&]|$)/.test(location.hash);
+
+  // Feed filters need each track's length, which SoundCloud only draws on a canvas, and what
+  // was played. Both come from the feed and history data the page downloads anyway.
+  const lengths = new Map(), pathOf = url => { try { return new URL(url, location.origin).pathname; } catch { return null; } };
+  let played = new Set();
+  try { played = new Set(JSON.parse(localStorage.getItem('golow-played') || '[]')); } catch {}
+  function remember(paths) {
+    const fresh = paths.filter(at => at && !played.has(at));
+    if (!fresh.length) return;
+    for (const at of fresh) played.add(at);
+    try { localStorage.setItem('golow-played', JSON.stringify([...played].slice(-5000))); } catch {}
+    for (const item of document.querySelectorAll('[data-golow-seen]')) item.removeAttribute('data-golow-seen');
+  }
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (/^https:\/\/api-v2\.soundcloud\.com\/(stream|me\/play-history)/.test(String(url))) this.addEventListener('load', readFeedData);
+    return xhrOpen.call(this, method, url, ...rest);
+  };
+  function readFeedData() {
+    const history = [];
+    try {
+      for (const item of JSON.parse(this.responseText).collection || []) {
+        const sound = item.track || item.playlist, at = sound && pathOf(sound.permalink_url);
+        if (!at) continue;
+        if (this.responseURL.includes('/play-history')) history.push(at); else lengths.set(at, sound.duration || 0);
+      }
+    } catch {}
+    remember(history);
+    for (const item of document.querySelectorAll('[data-golow-seen]')) item.removeAttribute('data-golow-seen');
+    filterFeed();
+  }
 
   // Generic upsell selectors are guarded so a match can never hide the player, a form, a dialog or consent.
   const protectedSelector = 'audio,video,input,form,[role="dialog"],.playControls,.waveform,.playbackTimeline,button[aria-label*="Play"],button[aria-label*="Pause"]';
@@ -39,6 +70,7 @@
   // on new track pages, plus room for content on wide monitors.
   const polish = ['button[aria-label="Unlike"]{color:#f50!important}', '[role="slider"][aria-label="Waveform"] svg>g{opacity:1!important}'];
   const wide = ['.l-container{width:min(1840px,calc(100vw - 64px))!important}', '.l-main{width:auto!important}'];
+  const feedFilters = () => (settings.mixes ? [] : ['.soundList__item[data-golow-long]']).concat(settings.played ? [] : ['.soundList__item[data-golow-played]']);
   const waveformComments = ['.waveform :is(.commentPlaceholder,.commentPopover,canvas.waveformCommentsNode)', 'div:has(>[role="slider"][aria-label="Waveform"]) ol'];
   // Mini player: only the control bar, filling the window, with the timeline given room.
   const mini = ['body{overflow:hidden!important}', ':is(body>:not(#app),#app>:not(.playControls)){display:none!important}',
@@ -73,7 +105,7 @@
       `@media (min-width:1600px){${rules(wide)}}@media (max-width:999px){${rules(narrow)}}` : '') +
       (settings.efficiency ? hide(idleSpinners.map(s => s + ' svg:has(animate,animateTransform)')) : '') +
       (settings.comments ? '' : hide(waveformComments));
-    sheet.replaceSync(shared + (settings.compact ? rules(mini) : ''));
+    sheet.replaceSync(shared + hide(['[data-golow-filtered]', ...feedFilters()]) + (settings.compact ? rules(mini) : ''));
     for (const frameSheet of frameSheets.values()) frameSheet.replaceSync(shared);
   }
   restyle();
@@ -119,7 +151,10 @@
     if (!placer) {
       // SoundCloud renders its header after load and swaps it out once more. The callback is
       // a single check, so the button returns in the same frame it was dropped.
-      placer = new MutationObserver(() => { if (!placed()) place(); });
+      placer = new MutationObserver(() => {
+        if (!placed()) place();
+        if (location.pathname === '/feed') { filterFeed(); feedSwitches(); } else if (/^\/[^/]+\/likes$/.test(location.pathname)) likesTools();
+      });
       placer.observe(document.body, {childList: true, subtree: true});
     }
     host.toggleAttribute('data-mini', settings.compact);
@@ -149,7 +184,14 @@
     const now = title ? `${title} – ${document.querySelector('.playbackSoundBadge__lightLink')?.title || ''}` : null;
     if (now !== nowPlaying) {
       send({now: nowPlaying = now});
-      if (now) autoplayOff();
+      if (now) {
+        autoplayOff();
+        remember([pathOf(document.querySelector('.playbackSoundBadge__titleLink')?.getAttribute('href'))]);
+        filterFeed();
+      }
+      followShuffle(true);
+    } else {
+      followShuffle(false);
     }
     if (!settings.autoplay) document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
   }
@@ -167,6 +209,119 @@
     queue.style.visibility = '';
     autoplayBusy = false;
   }
+  // Feed: hide mixes over 20 minutes and tracks already played, with switches next to
+  // SoundCloud's own Reposts switch.
+  function filterFeed() {
+    if (location.pathname !== '/feed') return;
+    for (const item of document.querySelectorAll('.soundList__item:not([data-golow-seen])')) {
+      const at = item.querySelector('a.soundTitle__title')?.getAttribute('href');
+      item.setAttribute('data-golow-seen', '');
+      item.toggleAttribute('data-golow-long', (lengths.get(at) || 0) > 20 * 60 * 1000);
+      item.toggleAttribute('data-golow-played', played.has(at));
+    }
+  }
+  function feedSwitches() {
+    const filters = document.querySelector('.stream__filter');
+    if (filters && !filters.querySelector('[data-golow]')) {
+      for (const [key, label] of [['mixes', 'Mixes'], ['played', 'Played']]) {
+        const item = Object.assign(document.createElement('div'), {className: 'streamFilter__item sc-ml-2x'});
+        item.dataset.golow = key;
+        item.innerHTML = `<label class="streamFilter__label sc-type-light sc-text-secondary sc-type-small sc-text-body sc-mr-1x">${label}</label>` +
+          '<label class="toggle sc-toggle sc-toggle-small"><span class="sc-toggle-handle"></span><input class="sc-toggle-input sc-visuallyhidden" type="checkbox"></label>';
+        item.querySelector('input').addEventListener('change', event => change(key, event.target.checked));
+        filters.append(item);
+      }
+    }
+    for (const item of document.querySelectorAll('[data-golow]')) {
+      item.querySelector('input').checked = settings[item.dataset.golow];
+      item.querySelector('.sc-toggle').classList.toggle('sc-toggle-on', settings[item.dataset.golow]);
+    }
+  }
+
+  // True shuffle. SoundCloud's queue only ever holds about 27 tracks, so its own shuffle keeps
+  // repeating the same few. GoLow keeps a random order over every like and plays each pick with
+  // SoundCloud's player while the Likes page stays open, including minimized or in the tray.
+  const TRACK_LINK = '.playableTile__artworkLink, .soundTitle__title';
+  let shuffleOrder = null, shufflePos = 0, userPick = false, nearEnd = false;
+  const seconds = selector => (document.querySelector(selector + ' [aria-hidden]')?.textContent || '').split(':').reduce((t, n) => t * 60 + Number(n), 0);
+  function pick(pos) {
+    const at = shuffleOrder?.[pos];
+    const item = at && [...listItems()].find(candidate => candidate.querySelector(TRACK_LINK)?.getAttribute('href') === at);
+    if (!item) return stopShuffle();
+    [shufflePos, nearEnd] = [pos, false];
+    item.querySelector('.sc-button-play')?.click();
+  }
+  function stopShuffle() {
+    shuffleOrder = null;
+    const button = document.querySelector('[data-golow-tools] button');
+    if (button) button.textContent = 'Shuffle all';
+  }
+  function followShuffle(trackChanged) {
+    if (!shuffleOrder || !nowPlaying) return;
+    const at = pathOf(document.querySelector('.playbackSoundBadge__titleLink')?.getAttribute('href'));
+    if (trackChanged && at !== shuffleOrder[shufflePos]) {
+      const index = shuffleOrder.indexOf(at);
+      if (userPick && index >= 0) shufflePos = index;   // The user picked a like: carry on from there.
+      else if (userPick) stopShuffle();                  // The user played something else.
+      else pick(shufflePos + 1);                         // SoundCloud advanced on its own: take the next pick.
+      userPick = false;
+      return;
+    }
+    const left = seconds('.playbackTimeline__duration') - seconds('.playbackTimeline__timePassed');
+    if (!nearEnd && seconds('.playbackTimeline__timePassed') > 0 && left <= 1) {
+      nearEnd = true;
+      pick(shufflePos + 1);
+    }
+  }
+
+  // Likes: a filter box and a shuffle that covers every like, not just the ~24 loaded.
+  const listItems = () => document.querySelectorAll('.lazyLoadingList :is(.badgeList__item, .soundList__item)');
+  let loading = null;
+  function loadAll(progress = () => {}) {
+    const page = location.pathname;
+    return loading ||= (async () => {
+      for (let count = -1, stable = 0; stable < 4 && location.pathname === page;) {
+        const now = listItems().length;
+        [stable, count] = [now === count ? stable + 1 : 0, now];
+        progress(count);
+        scrollTo(0, document.documentElement.scrollHeight);
+        await new Promise(r => setTimeout(r, 350));
+      }
+      scrollTo(0, 0);
+      loading = null;
+    })();
+  }
+  function likesTools() {
+    const top = document.querySelector('.collectionSection__top');
+    if (!top || top.querySelector('[data-golow-tools]')) return;
+    const tools = Object.assign(document.createElement('div'), {className: 'g-flex-row-centered sc-mr-2x'});
+    tools.dataset.golowTools = '';
+    tools.innerHTML = '<input type="search" placeholder="Filter likes" aria-label="Filter likes" class="sc-input sc-input-small sc-mr-1x">' +
+      '<button type="button" class="sc-button sc-button-medium">Shuffle all</button>';
+    const [input, button] = tools.children;
+    input.addEventListener('input', async () => {
+      const text = input.value.trim().toLowerCase();
+      if (text) await loadAll();
+      for (const item of listItems()) item.toggleAttribute('data-golow-filtered', !!text && !item.textContent.toLowerCase().includes(text));
+    });
+    button.addEventListener('click', async () => {
+      if (shuffleOrder) return stopShuffle();
+      button.disabled = true;
+      await loadAll(count => { button.textContent = `Loading ${count}…`; });
+      button.disabled = false;
+      // Fisher-Yates over every loaded like.
+      shuffleOrder = [...listItems()].map(item => item.querySelector(TRACK_LINK)?.getAttribute('href')).filter(Boolean);
+      for (let i = shuffleOrder.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffleOrder[i], shuffleOrder[j]] = [shuffleOrder[j], shuffleOrder[i]];
+      }
+      button.textContent = 'Stop shuffle';
+      const native = document.querySelector('.shuffleControl.m-shuffling');
+      if (native) native.click();
+      pick(0);
+    });
+    (top.querySelector('.collectionSection__action') || top.lastChild).before(tools);
+  }
   const placed = () => host.isConnected && !host.hasAttribute('data-floating') &&
     host.parentElement.matches(settings.compact ? '.playControls__elements' : '.header__right');
 
@@ -181,8 +336,9 @@
     restyle();
     place();
     if (wheelBar) watchPlayer();
+    feedSwitches();
     if (!panel) return;
-    for (const key of KEYS) $(key).checked = settings[key];
+    for (const key of PANEL) $(key).checked = settings[key];
     $('recovery').hidden = !recovery;
   }
 
@@ -204,7 +360,7 @@
         <p id="recovery" hidden>Cleanup is off for this page (noclean).</p>
         <a id="quality" href="https://soundcloud.com/settings/streaming">Audio quality<span aria-hidden="true">›</span></a>`;
       shadow.appendChild(panel);
-      for (const key of KEYS) $(key).addEventListener('change', event => change(key, event.target.checked));
+      for (const key of PANEL) $(key).addEventListener('change', event => change(key, event.target.checked));
       $('quality').addEventListener('click', () => openSettings(false));
       apply();
     }
@@ -219,6 +375,7 @@
   });
   document.addEventListener('click', event => {
     if (panel && !panel.hidden && !event.composedPath().includes(host)) openSettings(false);
+    if (event.isTrusted && event.target.closest?.('.lazyLoadingList .sc-button-play')) userPick = true;
     // SoundCloud's own autoplay switch sets the remembered choice too.
     if (event.isTrusted && event.target.closest?.('.queueFallback__toggle')) {
       setTimeout(() => change('autoplay', !!document.querySelector('.queueFallback__toggle .sc-toggle-on')));
@@ -228,7 +385,7 @@
   window.__scClient = Object.freeze({
     update(value) { Object.assign(settings, value); save(); apply(); },
     openSettings,
-    diagnostics: () => ({placed: !!host && placed(), settings_built: !!panel, slot: host?.parentElement?.className || null,
+    diagnostics: () => ({placed: !!host && placed(), settings_built: !!panel, shuffle: shuffleOrder?.[shufflePos] ?? null, slot: host?.parentElement?.className || null,
       settings: {...settings}, recovery}),
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', place, {once: true}); else place();
