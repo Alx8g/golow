@@ -31,72 +31,82 @@ test('does not inject into authentication providers or child frames', () => {
 });
 
 const spinner = '<svg><path><animateTransform attributeName="transform" type="rotate" dur="1s" repeatCount="indefinite"/></path></svg>';
-const html = `<html><head></head><body><header class="header" id="header"></header><div id="app">
+const html = `<html><head></head><body><div id="app">
+<header class="header"><div class="header__inner"><div class="header__left"><ul class="header__navMenu" id="main-nav"><li>Home</li></ul></div>
+<div class="header__right" id="right"><div class="header__upsellWrapper" id="upsell"><a href="https://checkout.soundcloud.com/artist">Try Artist Pro</a></div>
+<a class="header__forArtistsButton" id="studio" href="/artists">Artist Studio</a><div class="header__soundInput" id="upload"><a href="/upload">Upload</a><input type="file"></div>
+<ul class="header__navMenu" id="more"><li>More</li></ul></div></div></header>
+<div class="l-container l-content"><div class="l-product-banners"><div class="banner" id="sales"><a href="https://checkout.soundcloud.com/artist?ref=1">Learn more</a></div>
+<div class="banner" id="notice">Verify your email <a href="/settings">Settings</a></div></div>
+<div class="l-fluid-fixed"><div class="l-main" id="main">
 <div class="upsellBanner" id="promo">Try Artist Pro</div>
-<div class="announcementBanner" id="ordinary">Account notice <button>Close</button></div>
 <div class="upsellBanner" id="protected"><button aria-label="Play track">Play</button></div>
 <div class="cookieBanner" id="consent">Choose cookies <button>Accept</button></div>
-<div class="playControls" id="player"><button aria-label="Pause">Pause</button></div>
-<div class="track" id="track">A song about promotions <button>Like</button></div>
-<a href="/go" id="upsell-link">Go+</a>
-<aside><div class="homeCreditTracker" id="artist-tools"><iframe srcdoc="Artist Tools"></iframe></div>
-<article class="artistShortcutsModule" id="new-tracks"><button aria-label="Play new track">Play</button></article></aside>
+<a href="/go" id="upsell-link">Go+</a><div class="homeCreditTracker" id="artist-tools"><iframe srcdoc="Artist Tools"></iframe></div>
 <div class="playableTile" data-playbutton="hover"><div class="playableTile__artwork"><div class="playableTile__playButton" id="idle">${spinner}</div></div></div>
 <div class="playableTile m-playing" data-playbutton="hover"><div class="playableTile__artwork"><div class="playableTile__playButton" id="active">${spinner}</div></div></div>
-<div id="dynamic"></div></div></body></html>`;
+</div><div class="l-sidebar-right" id="sidebar"><div class="whoToFollowModule" id="follow"></div><div class="mobileApps" id="mobile"></div>
+<div class="l-footer" id="footer">Legal</div><article class="artistShortcutsModule" id="new-tracks"><button aria-label="Play new track">Play</button></article></div></div></div>
+<div class="playControls" id="player"><section class="playControls__inner"><div class="playControls__wrapper l-container">
+<div class="playControls__elements" id="elements"><button class="playControls__control" aria-label="Pause">Pause</button></div></div></section></div>
+</div></body></html>`;
 
 // Each step throws with its message on failure; Runtime.evaluate reports it.
 const checks = `(async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const assert = (value, message) => { if (!value) throw new Error(message); };
-  const hidden = target => getComputedStyle(typeof target === 'string' ? document.getElementById(target) : target).display === 'none';
+  const byId = id => document.getElementById(id);
+  const hidden = target => getComputedStyle(typeof target === 'string' ? byId(target) : target).display === 'none';
   const spinner = id => document.querySelector('#' + id + ' svg');
-  const client = window.__scClient;
-  await wait(200);
-  assert(hidden('promo') && hidden('upsell-link') && hidden('artist-tools'), 'explicit promos hidden');
-  for (const id of ['ordinary', 'protected', 'consent', 'player', 'track', 'new-tracks']) assert(!hidden(id), 'protected content: ' + id);
+  const client = window.__scClient, host = () => byId('sc-client-settings'), shadow = () => host().shadowRoot;
+  const sent = () => window.__scMessages.at(-1) || {};
+  await wait(100);
+  for (const id of ['promo', 'upsell-link', 'artist-tools', 'upsell', 'studio', 'upload', 'sales', 'follow', 'mobile', 'footer']) assert(hidden(id), 'hidden: ' + id);
+  for (const id of ['protected', 'consent', 'player', 'notice', 'new-tracks', 'main-nav']) assert(!hidden(id), 'kept: ' + id);
   assert(hidden(spinner('idle')) && !hidden(spinner('active')), 'only spinners inside hidden play buttons stop rendering');
-  const initial = client.diagnostics();
-  assert(!initial.settings_built && !document.getElementById('sc-client-settings').shadowRoot.getElementById('panel'), 'settings panel deferred');
+  assert(byId('more').previousElementSibling === host(), 'gear sits left of the more menu');
+  assert(!client.diagnostics().settings_built && !shadow().getElementById('panel'), 'settings panel deferred');
   assert(document.querySelectorAll('link[rel="preconnect"]').length === 3, 'three first-party preconnects');
-  await wait(3200);
-  assert(client.diagnostics().scans === initial.scans, 'no idle polling scans');
-  document.getElementById('dynamic').innerHTML = '<div class="upsellBanner" id="new-promo">New upsell</div>';
-  await wait(250);
-  assert(hidden('new-promo'), 'new subtree cleaned');
-  client.update({cleanup: false, efficiency: false});
-  assert(!hidden('promo') && !hidden('new-promo') && !hidden('artist-tools') && !hidden(spinner('idle')), 'toggles restore content');
-  assert(!client.diagnostics().observer_active, 'disabled cleanup disconnects observer');
-  client.update({cleanup: true, efficiency: true});
-  assert(hidden('promo') && hidden('artist-tools') && !hidden('new-tracks') && hidden(spinner('idle')), 're-enable');
-  client.setNativeHidden(true);
-  const background = client.diagnostics();
-  assert(!background.observer_active && !background.timer_active, 'background has no timer or observer');
-  document.getElementById('dynamic').innerHTML = '<div class="upsellBanner" id="background-promo">Later promo</div>';
-  await wait(250);
-  assert(hidden('background-promo') && client.diagnostics().scans === background.scans, 'CSS hides promos without background scans');
-  client.setNativeHidden(false);
+
+  const fresh = byId('right').cloneNode(true);
+  fresh.querySelector('#sc-client-settings').remove();
+  byId('right').replaceWith(fresh);
+  await wait(0);
+  assert(byId('more').previousElementSibling === host() && client.diagnostics().placed, 'gear returns after SoundCloud swaps its header');
+
+  shadow().getElementById('open').click();
+  assert(!shadow().getElementById('panel').hidden && shadow().getElementById('open').getAttribute('aria-expanded') === 'true', 'gear opens settings');
+  byId('main').click();
+  assert(shadow().getElementById('panel').hidden, 'outside click closes settings');
+  document.dispatchEvent(new KeyboardEvent('keydown', {key: ',', ctrlKey: true}));
+  assert(!shadow().getElementById('panel').hidden, 'Ctrl+, opens settings');
+  document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+  assert(shadow().getElementById('panel').hidden, 'Escape closes settings');
+
   client.openSettings(true);
-  const shadow = document.getElementById('sc-client-settings').shadowRoot;
-  assert(!shadow.getElementById('panel').hidden, 'settings opens');
-  shadow.getElementById('compact').click();
-  assert(window.__scMessages.some(m => m.compact === true && Object.keys(m).length === 4), 'settings sent as one bounded object');
-  shadow.getElementById('close').click();
-  assert(shadow.getElementById('panel').hidden, 'settings closes');
-  const before = client.diagnostics().scans;
-  for (let i = 0; i < 100; i++) document.getElementById('dynamic').appendChild(document.createElement('span'));
-  const fake = Object.assign(document.createElement('span'), {className: 'upsellBanner'});
-  document.getElementById('player').appendChild(fake);
-  await wait(250);
-  assert(!client.diagnostics().timer_active && client.diagnostics().scans === before, 'irrelevant and player mutations schedule no scans');
-  assert(!hidden(fake), 'player subtree never cleaned');
-  document.getElementById('header').innerHTML = '<div class="announcementBanner" id="header-promo">Try Artist Pro</div>';
-  await wait(250);
-  assert(hidden('header-promo') && client.diagnostics().scans > before, 'header announcements cleaned by the scoped observer');
+  shadow().getElementById('compact').click();
+  assert(sent().compact === true && Object.keys(sent()).length === 4, 'mini player sent as one bounded settings object');
+  assert(document.documentElement.hasAttribute('data-sc-mini') && host().parentElement === byId('elements'), 'mini player moves the button into the bar');
+  assert(hidden(document.querySelector('header')) && !hidden('player') && shadow().getElementById('panel').hidden, 'mini player shows only the bar');
+  assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')), 'mini player offers expand');
+  shadow().getElementById('expand').click();
+  assert(sent().compact === false && byId('more').previousElementSibling === host(), 'expand restores the full window');
+
+  client.update({cleanup: false, efficiency: false});
+  assert(!hidden('promo') && !hidden('upsell') && !hidden('follow') && !hidden(spinner('idle')), 'toggles restore content');
+  client.update({cleanup: true, efficiency: true});
+  assert(hidden('promo') && hidden('follow') && hidden(spinner('idle')), 're-enable');
   return 'ok';
 })()`;
 
-test('cleans promotions and idle spinners in a real browser', {skip: !edge && 'Microsoft Edge not found'}, async () => {
+const narrowChecks = `(() => {
+  const style = id => getComputedStyle(document.getElementById(id));
+  if (style('sidebar').display !== 'none') throw new Error('narrow windows drop the sidebar');
+  if (style('main').marginRight !== '0px' || style('main').width === '568px') throw new Error('main column flows');
+  return 'ok';
+})()`;
+
+test('cleans up, places settings and runs the mini player in a real browser', {skip: !edge && 'Microsoft Edge not found'}, async () => {
   const fixture = script.replace(/location\.protocol !== 'https:' \|\|\s*!\['soundcloud\.com', 'www\.soundcloud\.com'\]\.includes\(location\.hostname\)/, 'false');
   assert.notEqual(fixture, script, 'origin guard replaced in the fixture copy only');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'golow-test-'));
@@ -111,14 +121,22 @@ test('cleans promotions and idle spinners in a real browser', {skip: !edge && 'M
     const replies = new Map();
     let id = 0;
     ws.onmessage = ({data}) => { const message = JSON.parse(data); replies.get(message.id)?.(message.result); };
-    const evaluate = expression => new Promise((resolve, reject) => {
-      replies.set(++id, result => result.exceptionDetails ? reject(new Error(result.exceptionDetails.exception?.description)) : resolve(result.result.value));
-      ws.send(JSON.stringify({id, method: 'Runtime.evaluate', params: {expression, awaitPromise: true, returnByValue: true}}));
+    const cdp = (method, params) => new Promise(resolve => {
+      replies.set(++id, resolve);
+      ws.send(JSON.stringify({id, method, params}));
     });
+    const evaluate = async expression => {
+      const result = await cdp('Runtime.evaluate', {expression, awaitPromise: true, returnByValue: true});
+      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description);
+      return result.result.value;
+    };
+    await cdp('Emulation.setDeviceMetricsOverride', {width: 1280, height: 800, deviceScaleFactor: 1, mobile: false});
     await evaluate(`document.open();document.write(${JSON.stringify(html)});document.close();`);
     await evaluate('window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};');
     await evaluate(fixture);
     assert.equal(await evaluate(checks), 'ok');
+    await cdp('Emulation.setDeviceMetricsOverride', {width: 700, height: 800, deviceScaleFactor: 1, mobile: false});
+    assert.equal(await evaluate(narrowChecks), 'ok');
     ws.close();
   } finally {
     const exited = new Promise(resolve => browser.once('exit', resolve));

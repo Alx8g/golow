@@ -18,14 +18,14 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 ## What it does
 
-- Hides known upsell and promotion banners with exact CSS rules that never touch the player, forms, dialogs or cookie consent.
-- Skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
-- Stops SoundCloud's always-spinning hidden buffering icons from forcing a page layout on every display refresh.
-- Asks WebView2 for a low memory target while minimized. Playback keeps running.
-- Remembers window size and position, restores the existing window instead of opening a second copy, and offers compact and always-on-top modes.
-- Allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub).
+Settings live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`. There are four switches:
 
-Press `Ctrl+,` or the App settings button for options. Each optimisation can be turned off there. Add `?noclean` to a SoundCloud URL to load one page with cleanup disabled.
+- **Clean up interface** hides upsells and listener-irrelevant modules: Try Artist Pro, Artist Studio, Upload, artist follow suggestions, app-store badges, footer links and banners that sell a plan. Exact CSS rules never touch the player, forms, dialogs or cookie consent. Below 1000 px wide the sidebar drops and SoundCloud's fixed 960 px layout reflows, so narrow windows need no horizontal scrolling. Scrollbars follow the dark theme.
+- **Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
+- **Mini player** shrinks the window to SoundCloud's control bar: previous, play, next, progress and the current track. The expand button on the right returns to the full window.
+- **Keep on top** pins the window above others, which pairs well with the mini player.
+
+Keyboard media keys and the Windows media overlay work through WebView2. GoLow remembers window size and position, restores the existing window instead of opening a second copy, and allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub). Add `?noclean` to a SoundCloud URL to load one page without cleanup.
 
 ## Install
 

@@ -64,7 +64,6 @@ fn set_background(view: &WebView, hidden: bool, efficiency: bool) {
     let level = if hidden && efficiency { MemoryUsageLevel::Low } else { MemoryUsageLevel::Normal };
     let _ = view.set_memory_usage_level(level);
     let _ = view.set_visible(!hidden);
-    let _ = view.evaluate_script(&format!("window.__scClient?.setNativeHidden({hidden});"));
 }
 
 fn apply_window(
@@ -79,10 +78,11 @@ fn apply_window(
             if !window.is_minimized() {
                 *normal = window.inner_size();
             }
-            window.set_min_inner_size(Some(LogicalSize::new(360.0, 160.0)));
-            window.set_inner_size(LogicalSize::new(560.0, 260.0));
+            // Mini player: just SoundCloud's 48px control bar.
+            window.set_min_inner_size(Some(LogicalSize::new(420.0, 56.0)));
+            window.set_inner_size(LogicalSize::new(720.0, 56.0));
         } else {
-            window.set_min_inner_size(Some(LogicalSize::new(360.0, 600.0)));
+            window.set_min_inner_size(Some(LogicalSize::new(360.0, 400.0)));
             window.set_inner_size(*normal);
         }
     }
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = WindowBuilder::new()
         .with_title(APP_NAME)
         .with_inner_size(LogicalSize::new(1280.0, 800.0))
-        .with_min_inner_size(LogicalSize::new(360.0, 600.0));
+        .with_min_inner_size(LogicalSize::new(360.0, 400.0));
     if let Some(state) =
         read_json::<WindowState>(&dir.join("window.json")).filter(WindowState::valid)
     {
