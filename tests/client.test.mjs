@@ -16,7 +16,7 @@ const edge = [process.env.EDGE_PATH, 'C:/Program Files (x86)/Microsoft/Edge/Appl
 
 test('parses and has no polling or document text walkers', () => {
   new vm.Script(script);
-  assert.doesNotMatch(script, /setInterval|createTreeWalker|getBoundingClientRect/);
+  assert.doesNotMatch(script, /setInterval|createTreeWalker/);
 });
 
 test('does not inject into authentication providers or unrelated child frames', () => {
@@ -58,7 +58,10 @@ const page = `<!doctype html><html><head></head><body><div id="app">
 <div class="playControls" id="player"><section class="playControls__inner"><div class="playControls__wrapper l-container">
 <div class="playControls__elements" id="elements"><button class="playControls__control" aria-label="Pause">Pause</button>
 <div class="playControls__volume"><button class="volume__speakerIcon" id="speaker">Volume</button></div>
-<button class="playControls__play" id="play">Play</button><div class="playbackSoundBadge"><a class="playbackSoundBadge__lightLink" title="Artist"></a>
+<button class="playControls__play" id="play">Play</button>
+<div class="playbackTimeline__timePassed"><span aria-hidden="true" id="passed">0:00</span></div>
+<div class="playbackTimeline__progressWrapper" id="progress" style="width:300px;height:10px"></div>
+<div class="playbackTimeline__duration"><span aria-hidden="true" id="duration">5:00</span></div><div class="playbackSoundBadge"><a class="playbackSoundBadge__lightLink" title="Artist"></a>
 <a class="playbackSoundBadge__titleLink" title="Track"></a><a class="playbackSoundBadge__showQueue" id="show-queue">Next up</a></div></div></div></section>
 <div class="playControls__queue" id="queue"></div></div>
 <script>
@@ -71,6 +74,10 @@ document.getElementById('show-queue').addEventListener('click', () => {
   document.getElementById('autoplay-input').addEventListener('click', () => { autoplayOn = !autoplayOn; document.getElementById('autoplay').classList.toggle('sc-toggle-on', autoplayOn); });
 });
 window.__autoplayOn = () => autoplayOn;
+document.getElementById('progress').addEventListener('click', event => {
+  const box = event.currentTarget.getBoundingClientRect();
+  window.__seek = (event.clientX - box.left) / box.width;
+});
 for (const url of ['https://api-v2.soundcloud.com/stream?limit=10', 'https://api-v2.soundcloud.com/me/play-history/tracks?limit=25']) {
   const request = new XMLHttpRequest();
   request.open('GET', url);
@@ -105,7 +112,11 @@ document.addEventListener('click', event => {
 const trackPage = `<!doctype html><html><head></head><body>
 <button aria-label="Unlike" id="liked">Liked</button><button aria-label="Like" id="unliked">Like</button>
 <div><div role="slider" aria-label="Waveform"><svg><g style="opacity:.75"><rect width="2" height="9"></rect></g></svg></div>
-<div><div><ol id="avatars"><li><img alt="avatar"></li></ol></div></div></div></body></html>`;
+<div><div><ol id="avatars"><li><img alt="avatar"></li></ol></div></div></div>
+<ul aria-label="Comments" style="display:flex;flex-direction:column">
+<li id="c1"><div><button aria-label="Like"></button></div>no likes</li>
+<li id="c2"><div><div><button aria-label="Like"></button></div><span>5</span></div>five likes</li>
+<li id="c3"><div><button aria-label="Unlike"></button><span>2</span></div>two likes</li></ul></body></html>`;
 
 // Each step throws with its message on failure; Runtime.evaluate reports it.
 const checks = `(async () => {
@@ -154,7 +165,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 8, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 10, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
@@ -196,6 +207,22 @@ const checks = `(async () => {
   assert(sent().played === false && hidden('heard') && !hidden('short'), 'Played off hides tracks from listening history');
   client.update({mixes: true, played: true});
   assert(!hidden('long') && !hidden('heard') && feedSwitch('mixes').checked, 'feed filters restore');
+
+  const order = id => frameDoc.getElementById(id).style.order;
+  assert(order('c2') === '' && order('c3') === '', 'comments keep SoundCloud order by default');
+  client.update({top_comments: true});
+  assert(order('c2') === '-5' && order('c3') === '-2' && order('c1') === '', 'top comments first orders by likes');
+  client.update({top_comments: false});
+  assert(order('c2') === '', 'top comments first can be switched off');
+
+  document.querySelector('.playbackSoundBadge__titleLink').setAttribute('href', '/a/resume');
+  document.querySelector('.playbackSoundBadge__titleLink').title = 'Resume me';
+  byId('play').classList.add('playing');
+  byId('passed').textContent = '1:40';
+  await wait(0);
+  assert(JSON.parse(localStorage.getItem('golow-resume')).t === 100, 'remembers the playing position');
+  byId('play').classList.remove('playing');
+  await wait(0);
 
   client.update({cleanup: false, efficiency: false});
   assert(!hidden('promo') && !hidden('upsell') && !hidden('follow') && !hidden(spinner('idle')), 'toggles restore content');
@@ -241,6 +268,19 @@ const likesChecks = `(async () => {
   assert(picks.size === 60 || client.diagnostics().shuffle === null, 'a round plays every like once');
   button.click();
   assert(client.diagnostics().shuffle === null && button.textContent === 'Shuffle all', 'stop shuffle');
+  return 'ok';
+})()`;
+
+// After a restart SoundCloud shows the last track at 0:00; pressing play seeks back.
+const resumeChecks = `(async () => {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const badge = document.querySelector('.playbackSoundBadge__titleLink');
+  badge.setAttribute('href', '/a/resume');
+  badge.title = 'Resume me';
+  document.getElementById('passed').textContent = '0:00';
+  document.getElementById('play').classList.add('playing');
+  await wait(50);
+  if (Math.abs((window.__seek ?? -1) - 100 / 300) > 0.02) throw new Error('resumes at the remembered position: ' + window.__seek);
   return 'ok';
 })()`;
 
@@ -309,6 +349,9 @@ test('cleans up, styles new track pages, settings, mini player, feed filters and
       assert.equal(await evaluate(widthChecks(width)), 'ok', `${width}px`);
     }
     await resize(1280);
+    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/feed`});
+    for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete'"); i++) await sleep(100);
+    assert.equal(await evaluate(resumeChecks), 'ok');
     await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/you/likes`});
     for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete'"); i++) await sleep(100);
     assert.equal(await evaluate(likesChecks), 'ok');

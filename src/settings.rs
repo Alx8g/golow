@@ -15,6 +15,10 @@ pub struct Settings {
     /// Feed items: mixes over 20 minutes, and tracks already played.
     pub mixes: bool,
     pub played: bool,
+    /// Comments on redesigned track pages ordered by likes.
+    pub top_comments: bool,
+    /// "Listening to" status in Discord, when built with an application ID.
+    pub discord: bool,
 }
 
 impl Default for Settings {
@@ -28,6 +32,8 @@ impl Default for Settings {
             autoplay: true,
             mixes: true,
             played: true,
+            top_comments: false,
+            discord: true,
         }
     }
 }

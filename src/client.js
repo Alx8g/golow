@@ -4,9 +4,10 @@
       !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)) return;
   if (window.__scClient) return;
 
-  const PANEL = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'autoplay'], KEYS = [...PANEL, 'mixes', 'played'];
+  const PANEL = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'top_comments', 'autoplay', ...window.__scDiscord ? ['discord'] : []];
+  const KEYS = [...new Set([...PANEL, 'mixes', 'played', 'discord'])];
   const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true,
-    mixes: true, played: true}, window.__scInitialSettings);
+    mixes: true, played: true, top_comments: false, discord: true}, window.__scInitialSettings);
   // Same-origin preferences avoid briefly restoring old startup values on each
   // full navigation. Rust validates and owns the persisted native settings.
   try {
@@ -106,7 +107,10 @@
       (settings.efficiency ? hide(idleSpinners.map(s => s + ' svg:has(animate,animateTransform)')) : '') +
       (settings.comments ? '' : hide(waveformComments));
     sheet.replaceSync(shared + hide(['[data-golow-filtered]', ...feedFilters()]) + (settings.compact ? rules(mini) : ''));
-    for (const frameSheet of frameSheets.values()) frameSheet.replaceSync(shared);
+    for (const [frame, frameSheet] of frameSheets) {
+      frameSheet.replaceSync(shared);
+      if (frame.contentDocument) sortComments(frame.contentDocument);
+    }
   }
   restyle();
   // Redesigned track pages load in a same-origin /n/ iframe that WebView2 does not inject
@@ -119,7 +123,22 @@
     doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, frameSheet];
     frameSheets.set(frame, frameSheet);
     restyle();
+    new MutationObserver(() => sortComments(doc)).observe(doc.documentElement, {childList: true, subtree: true});
   }, true);
+  // Most-liked comments first. CSS order reorders the flex list without moving React's nodes.
+  const likesOf = item => {
+    for (let node = item.querySelector('button[aria-label$="ike"]'); node && node !== item; node = node.parentElement) {
+      if (/^\d+$/.test(node.textContent.trim())) return Number(node.textContent.trim());
+    }
+    return 0;
+  };
+  function sortComments(doc) {
+    for (const item of doc.querySelectorAll('ul[aria-label="Comments"] > li')) {
+      const likes = settings.top_comments ? likesOf(item) : 0;
+      const order = likes ? String(-likes) : '';
+      if (item.style.order !== order) item.style.order = order;
+    }
+  }
 
   // The gear sits in SoundCloud's own header, left of the "more" menu, so it flows with the
   // header at any width. The mini player shows an expand button in the control bar instead.
@@ -190,10 +209,34 @@
         filterFeed();
       }
       followShuffle(true);
+      if (now) trackPosition(true);
     } else {
       followShuffle(false);
+      trackPosition(false);
     }
     if (!settings.autoplay) document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
+  }
+  // Resume where you left off: SoundCloud restores the last track after a restart but starts it
+  // at 0:00, so remember the position and seek there the first time it plays again.
+  let resume = null, resumed = false, savedAt = -1;
+  try { resume = JSON.parse(localStorage.getItem('golow-resume')); } catch {}
+  function trackPosition(trackChanged) {
+    const at = pathOf(document.querySelector('.playbackSoundBadge__titleLink')?.getAttribute('href'));
+    const [passed, total] = [seconds('.playbackTimeline__timePassed'), seconds('.playbackTimeline__duration')];
+    if (trackChanged && !resumed) {
+      resumed = true;
+      if (resume?.at === at && passed < 5 && resume.t >= 30 && resume.t < total - 30) seek(resume.t / total);
+    }
+    if (at && nowPlaying && Math.floor(passed / 5) !== savedAt) {
+      savedAt = Math.floor(passed / 5);
+      try { localStorage.setItem('golow-resume', JSON.stringify({at, t: passed})); } catch {}
+    }
+  }
+  function seek(fraction) {
+    const bar = document.querySelector('.playbackTimeline__progressWrapper'), box = bar?.getBoundingClientRect();
+    if (!box?.width) return;
+    const point = {bubbles: true, clientX: box.left + box.width * fraction, clientY: box.top + box.height / 2};
+    for (const type of ['mousedown', 'mouseup', 'click']) bar.dispatchEvent(new MouseEvent(type, point));
   }
   // SoundCloud only renders its autoplay switch inside the open queue panel, and turns it
   // back on as tracks change. Open the panel invisibly, switch it off, close it again.
@@ -356,7 +399,9 @@
         <label>Mini player<input id="compact" type="checkbox" role="switch"></label>
         <label>Keep on top<input id="always_on_top" type="checkbox" role="switch"></label>
         <label>Waveform comments<input id="comments" type="checkbox" role="switch"></label>
+        <label>Top comments first<input id="top_comments" type="checkbox" role="switch"></label>
         <label>Autoplay related tracks<input id="autoplay" type="checkbox" role="switch"></label>
+        ${window.__scDiscord ? '<label>Discord status<input id="discord" type="checkbox" role="switch"></label>' : ''}
         <p id="recovery" hidden>Cleanup is off for this page (noclean).</p>
         <a id="quality" href="https://soundcloud.com/settings/streaming">Audio quality<span aria-hidden="true">›</span></a>`;
       shadow.appendChild(panel);
