@@ -303,8 +303,12 @@ test('cleans up, styles new track pages, settings, mini player, feed filters and
   const browser = spawn(edge, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank']);
   try {
     const portFile = path.join(profile, 'DevToolsActivePort');
-    for (let i = 0; i < 150 && !fs.existsSync(portFile); i++) await sleep(100);
-    const port = fs.readFileSync(portFile, 'utf8').split('\n')[0];
+    // Edge may still hold the file open while writing it, so retry until a port is readable.
+    let port;
+    for (let i = 0; i < 150 && !port; i++) {
+      try { port = fs.readFileSync(portFile, 'utf8').split('\n')[0]; } catch {}
+      if (!port) await sleep(100);
+    }
     const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page');
     const ws = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => Object.assign(ws, {onopen: resolve, onerror: reject}));
