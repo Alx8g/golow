@@ -8,11 +8,19 @@ pub struct Settings {
     pub efficiency: bool,
     pub compact: bool,
     pub always_on_top: bool,
+    /// Timed comments drawn on waveforms.
+    pub comments: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { cleanup: true, efficiency: true, compact: false, always_on_top: false }
+        Self {
+            cleanup: true,
+            efficiency: true,
+            compact: false,
+            always_on_top: false,
+            comments: true,
+        }
     }
 }
 
@@ -52,7 +60,7 @@ mod tests {
     #[test]
     fn defaults_enable_optimizations_and_reject_unknown_fields() {
         let s = Settings::default();
-        assert!(s.cleanup && s.efficiency && !s.compact && !s.always_on_top);
+        assert!(s.cleanup && s.efficiency && s.comments && !s.compact && !s.always_on_top);
         assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), s);
         assert!(serde_json::from_str::<Settings>(r#"{"command":"delete"}"#).is_err());
     }

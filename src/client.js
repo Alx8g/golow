@@ -4,8 +4,8 @@
       !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)) return;
   if (window.__scClient) return;
 
-  const KEYS = ['cleanup', 'efficiency', 'compact', 'always_on_top'];
-  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false}, window.__scInitialSettings);
+  const KEYS = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments'];
+  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true}, window.__scInitialSettings);
   // Same-origin preferences avoid briefly restoring old startup values on each
   // full navigation. Rust validates and owns the persisted native settings.
   try {
@@ -34,6 +34,11 @@
     '.searchOptions__navigation{display:flex;flex-wrap:wrap;gap:4px 16px}', '.searchOptions__navigationItem{padding:0!important}',
     '.l-sidebar-right{display:none!important}', '.header__left{display:flex;flex:none}', '.header__logo{width:44px!important;overflow:hidden}',
     ':is(.header__right,.header__loginMenu,.header__navWrapper){white-space:nowrap}', 'body{overflow-x:hidden}', '.playControls__control{flex-shrink:0}'];
+  // Readability fixes for the redesign: a visible liked state and full-contrast waveforms
+  // on new track pages, plus room for content on wide monitors.
+  const polish = ['button[aria-label="Unlike"]{color:#f50!important}', '[role="slider"][aria-label="Waveform"] svg>g{opacity:1!important}'];
+  const wide = ['.l-container{width:min(1840px,calc(100vw - 64px))!important}', '.l-main{width:auto!important}'];
+  const waveformComments = ['.waveform :is(.commentPlaceholder,.commentPopover,canvas.waveformCommentsNode)', 'div:has(>[role="slider"][aria-label="Waveform"]) ol'];
   // Mini player: only the control bar, filling the window, with the timeline given room.
   const mini = ['body{overflow:hidden!important}', ':is(body>:not(#app),#app>:not(.playControls)){display:none!important}',
     '.playControls{top:0!important;height:auto!important;display:flex!important;align-items:center;visibility:visible!important}',
@@ -45,13 +50,7 @@
   // it exactly while SoundCloud's own rules keep the button hidden.
   const idleSpinners = ['.playableTile[data-playbutton="never"] .playableTile__playButton',
     '.playableTile[data-playbutton="hover"]:not(.m-playing) .playableTile__artwork:not(:hover) .playableTile__playButton:not(.forceVisibility)'];
-  const css = [...promos, ...clutter].map(s => `html[data-sc-cleanup] ${s}`).join(',') + '{display:none!important}' +
-    idleSpinners.map(s => `html[data-sc-efficiency] ${s} svg:has(animate,animateTransform)`).join(',') + '{display:none!important}' +
-    'html[data-sc-cleanup]:has(>body.theme-dark){color-scheme:dark}' +
-    `@media (max-width:999px){${narrow.map(rule => 'html[data-sc-cleanup] ' + rule).join('')}}` +
-    mini.map(rule => 'html[data-sc-mini] ' + rule).join('');
-
-  let host = null, shadow = null, panel = null, placer = null;
+  let host = null, shadow = null, panel = null, placer = null, wheelBar = null;
   const $ = id => shadow.getElementById(id);
   const send = value => window.ipc?.postMessage?.(JSON.stringify(value));
   const save = () => {
@@ -61,23 +60,33 @@
     } catch {}
   };
 
-  function initializeDocument() {
-    const root = document.documentElement;
-    if (!root) return false;
-    if (settings.efficiency) {
-      for (const href of ['https://api-v2.soundcloud.com', 'https://a-v2.sndcdn.com', 'https://i1.sndcdn.com']) {
-        if (document.querySelector(`link[rel="preconnect"][href="${href}"]`)) continue;
-        (document.head || root).appendChild(Object.assign(document.createElement('link'), {rel: 'preconnect', href, crossOrigin: 'anonymous'}));
-      }
-    }
-    if (!document.getElementById('sc-client-style')) {
-      (document.head || root).appendChild(Object.assign(document.createElement('style'), {id: 'sc-client-style', textContent: css}));
-    }
-    root.toggleAttribute('data-sc-cleanup', settings.cleanup && !recovery);
-    root.toggleAttribute('data-sc-efficiency', settings.efficiency);
-    root.toggleAttribute('data-sc-mini', settings.compact);
-    return true;
+  // Rules live in constructed stylesheets rebuilt from settings. SoundCloud's React pages
+  // re-render <head> and <html>, but cannot remove a sheet that is not in the DOM.
+  const sheet = new CSSStyleSheet(), frameSheets = new Map();
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  const rules = list => list.map(rule => 'html:root ' + rule).join('');
+  const hide = list => list.map(selector => 'html:root ' + selector).join(',') + '{display:none!important}';
+  function restyle() {
+    const clean = settings.cleanup && !recovery;
+    const shared = (clean ? hide([...promos, ...clutter]) + rules(polish) + 'html:root:has(>body.theme-dark){color-scheme:dark}' +
+      `@media (min-width:1600px){${rules(wide)}}@media (max-width:999px){${rules(narrow)}}` : '') +
+      (settings.efficiency ? hide(idleSpinners.map(s => s + ' svg:has(animate,animateTransform)')) : '') +
+      (settings.comments ? '' : hide(waveformComments));
+    sheet.replaceSync(shared + (settings.compact ? rules(mini) : ''));
+    for (const frameSheet of frameSheets.values()) frameSheet.replaceSync(shared);
   }
+  restyle();
+  // Redesigned track pages load in a same-origin /n/ iframe that WebView2 does not inject
+  // into, so style each one from here once it loads. Sheets must come from the frame's realm.
+  document.addEventListener('load', event => {
+    const frame = event.target, doc = frame.tagName === 'IFRAME' && frame.contentDocument;  // null when cross-origin
+    if (!doc || !doc.location.pathname.startsWith('/n/')) return;
+    for (const old of frameSheets.keys()) if (!old.isConnected) frameSheets.delete(old);
+    const frameSheet = new frame.contentWindow.CSSStyleSheet();
+    doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, frameSheet];
+    frameSheets.set(frame, frameSheet);
+    restyle();
+  }, true);
 
   // The gear sits in SoundCloud's own header, left of the "more" menu, so it flows with the
   // header at any width. The mini player shows an expand button in the control bar instead.
@@ -113,6 +122,18 @@
       placer.observe(document.body, {childList: true, subtree: true});
     }
     host.toggleAttribute('data-mini', settings.compact);
+    const bar = document.querySelector('.playControls');
+    if (bar && bar !== wheelBar) {
+      wheelBar = bar;
+      // The wheel over the speaker icon drives SoundCloud's own Shift+arrow volume shortcut.
+      // Bound to the bar only, so page scrolling never waits on this listener.
+      bar.addEventListener('wheel', event => {
+        if (!event.target.closest('.playControls__volume')) return;
+        event.preventDefault();
+        const up = event.deltaY < 0;
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: up ? 'ArrowUp' : 'ArrowDown', keyCode: up ? 38 : 40, shiftKey: true, bubbles: true}));
+      }, {passive: false});
+    }
     const target = document.querySelector(settings.compact ? '.playControls__elements' : '.header__right > .header__navMenu');
     if (!target || placed()) return;
     host.removeAttribute('data-floating');
@@ -129,7 +150,7 @@
     send(settings);
   }
   function apply() {
-    initializeDocument();
+    restyle();
     place();
     if (!panel) return;
     for (const key of KEYS) $(key).checked = settings[key];
@@ -149,6 +170,7 @@
         <label>Reduce background work<input id="efficiency" type="checkbox" role="switch"></label>
         <label>Mini player<input id="compact" type="checkbox" role="switch"></label>
         <label>Keep on top<input id="always_on_top" type="checkbox" role="switch"></label>
+        <label>Waveform comments<input id="comments" type="checkbox" role="switch"></label>
         <p id="recovery" hidden>Cleanup is off for this page (noclean).</p>
         <a id="quality" href="https://soundcloud.com/settings/streaming">Audio quality<span aria-hidden="true">›</span></a>`;
       shadow.appendChild(panel);
@@ -175,9 +197,5 @@
     diagnostics: () => ({placed: !!host && placed(), settings_built: !!panel, slot: host?.parentElement?.className || null,
       settings: {...settings}, recovery}),
   });
-  if (!initializeDocument()) {
-    const rootReady = new MutationObserver(() => { if (initializeDocument()) rootReady.disconnect(); });
-    rootReady.observe(document, {childList: true});
-  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', place, {once: true}); else place();
 })();
