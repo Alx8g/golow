@@ -5,19 +5,25 @@ mod instance;
 mod policy;
 mod settings;
 
-use settings::{read_json, write_json, Settings, WindowState};
+use settings::{read_json, write_json, Message, Settings, WindowState};
 use std::{
     cell::{Cell, RefCell},
     io::Write,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use tao::{
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoopBuilder},
+    event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
+    platform::windows::{EventLoopBuilderExtWindows, WindowExtWindows},
     window::{Icon, Window, WindowBuilder, WindowId},
+};
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem},
+    MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, WebContext, WebView, WebViewBuilder,
@@ -30,8 +36,12 @@ const SAVE_DELAY: Duration = Duration::from_millis(350);
 #[derive(Clone, Debug)]
 enum Action {
     Settings(Settings),
+    Now(Option<String>),
     PageLoaded,
     ClosePopup(WindowId),
+    Show,
+    PlayPause,
+    Quit,
 }
 
 struct Popup {
@@ -88,6 +98,22 @@ fn apply_window(
     }
 }
 
+/// Shown while music keeps playing behind a closed window.
+fn tray(rgba: &[u8], w: u32, h: u32, tooltip: &str) -> Option<TrayIcon> {
+    let item = |id: &str, label: &str| MenuItem::with_id(id, label, true, None);
+    let (show, play, quit) = (
+        item("show", &format!("Show {APP_NAME}")),
+        item("play", "Play/Pause"),
+        item("quit", "Quit"),
+    );
+    TrayIconBuilder::new()
+        .with_icon(tray_icon::Icon::from_rgba(rgba.to_vec(), w, h).ok()?)
+        .with_tooltip(tooltip)
+        .with_menu(Box::new(Menu::with_items(&[&show, &play, &quit]).ok()?))
+        .build()
+        .ok()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let dir = app_dir();
@@ -97,9 +123,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     std::fs::write(dir.join("startup.log"), format!("{APP_NAME} {}\n", env!("CARGO_PKG_VERSION")))?;
     let mut prefs: Settings = read_json(&dir.join("settings.json")).unwrap_or_default();
-    let event_loop = EventLoopBuilder::<Action>::with_user_event().build();
+    // A second launch posts show_message to this window; the hook turns it into an action.
+    let (show_message, hook_proxy) = (instance::show_message(), Rc::new(RefCell::new(None)));
+    let hook_target: Rc<RefCell<Option<EventLoopProxy<Action>>>> = hook_proxy.clone();
+    let event_loop = EventLoopBuilder::<Action>::with_user_event()
+        .with_msg_hook(move |msg| {
+            let msg = unsafe { &*msg.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>() };
+            let ours = msg.message == show_message;
+            if let (true, Some(proxy)) = (ours, hook_target.borrow().as_ref()) {
+                let _ = proxy.send_event(Action::Show);
+            }
+            ours
+        })
+        .build();
     let target = (*event_loop).clone();
     let proxy = event_loop.create_proxy();
+    *hook_proxy.borrow_mut() = Some(proxy.clone());
+    let tray_proxy = Mutex::new(proxy.clone());
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            let _ = tray_proxy.lock().unwrap().send_event(Action::Show);
+        }
+    }));
+    let menu_proxy = Mutex::new(proxy.clone());
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        let action = match event.id.0.as_str() {
+            "play" => Action::PlayPause,
+            "quit" => Action::Quit,
+            _ => Action::Show,
+        };
+        let _ = menu_proxy.lock().unwrap().send_event(action);
+    }));
 
     let mut builder = WindowBuilder::new()
         .with_title(APP_NAME)
@@ -124,6 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let icon = include_bytes!(concat!(env!("OUT_DIR"), "/icon.rgba"));
     let window =
         builder.with_window_icon(Icon::from_rgba(icon.to_vec(), w, h).ok()).build(&event_loop)?;
+    instance.mark(window.hwnd());
     log(&dir, started, "window_built");
     let mut normal_size = window.inner_size();
     let position = window.outer_position().unwrap_or(PhysicalPosition::new(100, 100));
@@ -150,9 +210,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_navigation_handler(|url| policy::navigation_allowed(&url))
         .with_ipc_handler(move |request| {
             if request.body().len() <= 4096 && policy::soundcloud_page(&request.uri().to_string()) {
-                if let Ok(next) = serde_json::from_str(request.body()) {
-                    let _ = ipc_proxy.send_event(Action::Settings(next));
-                }
+                let _ = ipc_proxy.send_event(match serde_json::from_str(request.body()) {
+                    Ok(Message::Settings(next)) => Action::Settings(next),
+                    Ok(Message::Now(now)) => Action::Now(now.now),
+                    Err(_) => return,
+                });
             }
         })
         .with_new_window_req_handler(move |url, features| {
@@ -204,11 +266,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     view.load_url("https://soundcloud.com/discover")?;
     let (mut save_at, mut minimized) = (None::<Instant>, false);
+    let (mut now_playing, mut tray_icon) = (None::<String>, None::<TrayIcon>);
 
     event_loop.run(move |event, _, control_flow| {
         let _keep_alive = &instance;
         let mut exit = false;
         match event {
+            Event::UserEvent(Action::Now(now)) => {
+                now_playing = now.map(|title| title.chars().take(200).collect());
+                let title = now_playing.as_ref().map(|now| format!("{now} · {APP_NAME}"));
+                window.set_title(title.as_deref().unwrap_or(APP_NAME));
+                if let Some(tray) = &tray_icon {
+                    let _ = tray.set_tooltip(title.as_deref());
+                }
+            }
+            Event::UserEvent(Action::Show) => {
+                tray_icon = None;
+                window.set_visible(true);
+                window.set_minimized(false);
+                window.set_focus();
+                minimized = false;
+                set_background(&view, false, prefs.efficiency);
+            }
+            Event::UserEvent(Action::PlayPause) => {
+                let _ =
+                    view.evaluate_script("document.querySelector('.playControls__play')?.click()");
+            }
+            Event::UserEvent(Action::Quit) => exit = true,
             Event::UserEvent(Action::ClosePopup(id)) => {
                 popups.borrow_mut().retain(|p| p.window.id() != id)
             }
@@ -229,6 +313,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::WindowEvent { window_id, event, .. } if window_id == window.id() => {
                 match event {
+                    // Closing while music plays keeps it playing from the tray.
+                    WindowEvent::CloseRequested if now_playing.is_some() => {
+                        let tooltip =
+                            format!("{} · {APP_NAME}", now_playing.as_deref().unwrap_or(""));
+                        if tray_icon.is_none() {
+                            tray_icon = tray(icon, w, h, &tooltip);
+                        }
+                        if tray_icon.is_some() {
+                            window.set_visible(false);
+                            minimized = true;
+                            set_background(&view, true, prefs.efficiency);
+                            save_at = Some(Instant::now());
+                        } else {
+                            exit = true;
+                        }
+                    }
                     WindowEvent::CloseRequested => exit = true,
                     WindowEvent::Resized(size) => {
                         let hidden = window.is_minimized() || size.width == 0 || size.height == 0;

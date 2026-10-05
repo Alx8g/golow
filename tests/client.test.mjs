@@ -53,7 +53,22 @@ const page = `<!doctype html><html><head></head><body><div id="app">
 <div class="l-footer" id="footer">Legal</div><article class="artistShortcutsModule" id="new-tracks"><button aria-label="Play new track">Play</button></article></div></div></div>
 <div class="playControls" id="player"><section class="playControls__inner"><div class="playControls__wrapper l-container">
 <div class="playControls__elements" id="elements"><button class="playControls__control" aria-label="Pause">Pause</button>
-<div class="playControls__volume"><button class="volume__speakerIcon" id="speaker">Volume</button></div></div></div></section></div>
+<div class="playControls__volume"><button class="volume__speakerIcon" id="speaker">Volume</button></div>
+<button class="playControls__play" id="play">Play</button><div class="playbackSoundBadge"><a class="playbackSoundBadge__lightLink" title="Artist"></a>
+<a class="playbackSoundBadge__titleLink" title="Track"></a><a class="playbackSoundBadge__showQueue" id="show-queue">Next up</a></div></div></div></section>
+<div class="playControls__queue" id="queue"></div></div>
+<script>
+let autoplayOn = true;
+document.getElementById('show-queue').addEventListener('click', () => {
+  const queue = document.getElementById('queue');
+  if (queue.firstChild) return queue.replaceChildren();
+  queue.innerHTML = '<div class="queueFallback__toggle"><label class="sc-toggle" id="autoplay"><input type="checkbox" id="autoplay-input"></label></div>';
+  document.getElementById('autoplay').classList.toggle('sc-toggle-on', autoplayOn);
+  document.getElementById('autoplay-input').addEventListener('click', () => { autoplayOn = !autoplayOn; document.getElementById('autoplay').classList.toggle('sc-toggle-on', autoplayOn); });
+});
+window.__autoplayOn = () => autoplayOn;
+window.__newTrack = title => { autoplayOn = true; document.querySelector('.playbackSoundBadge__titleLink').title = title; };
+</script>
 </div></body></html>`;
 // The redesigned track page: Material UI markup with stable aria labels only.
 const trackPage = `<!doctype html><html><head></head><body>
@@ -108,7 +123,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 5, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 6, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
@@ -120,6 +135,26 @@ const checks = `(async () => {
   byId('speaker').dispatchEvent(wheel);
   byId('main').dispatchEvent(new WheelEvent('wheel', {deltaY: -100, bubbles: true, cancelable: true}));
   assert(wheel.defaultPrevented && keys.join() === 'Shift+ArrowUp', 'wheel over the speaker drives the volume shortcut, and only there');
+
+  byId('play').classList.add('playing');
+  await wait(0);
+  assert(sent().now === 'Track – Artist', 'reports the playing track');
+  byId('play').classList.remove('playing');
+  await wait(0);
+  assert(sent().now === null, 'reports pause');
+  client.update({autoplay: false});
+  window.__newTrack('Second track');
+  byId('play').classList.add('playing');
+  await wait(300);
+  assert(!window.__autoplayOn() && !byId('queue').firstChild && byId('queue').style.visibility === '', 'autoplay switched off behind a closed queue panel when a track starts');
+  byId('play').classList.remove('playing');
+  client.update({autoplay: true});
+  window.__newTrack('Third track');
+  byId('play').classList.add('playing');
+  await wait(300);
+  assert(window.__autoplayOn(), 'autoplay left alone when the user wants it');
+  byId('play').classList.remove('playing');
+  await wait(0);
 
   client.update({cleanup: false, efficiency: false});
   assert(!hidden('promo') && !hidden('upsell') && !hidden('follow') && !hidden(spinner('idle')), 'toggles restore content');

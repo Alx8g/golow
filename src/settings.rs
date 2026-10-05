@@ -10,6 +10,8 @@ pub struct Settings {
     pub always_on_top: bool,
     /// Timed comments drawn on waveforms.
     pub comments: bool,
+    /// SoundCloud's autoplay station after the queue ends. Off stays off.
+    pub autoplay: bool,
 }
 
 impl Default for Settings {
@@ -20,6 +22,7 @@ impl Default for Settings {
             compact: false,
             always_on_top: false,
             comments: true,
+            autoplay: true,
         }
     }
 }
@@ -42,6 +45,20 @@ impl WindowState {
     }
 }
 
+/// Messages from the page: new settings, or what is playing (`None` when paused).
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Message {
+    Settings(Settings),
+    Now(NowPlaying),
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NowPlaying {
+    pub now: Option<String>,
+}
+
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     if fs::metadata(path).ok()?.len() > 64 * 1024 {
         return None;
@@ -60,9 +77,22 @@ mod tests {
     #[test]
     fn defaults_enable_optimizations_and_reject_unknown_fields() {
         let s = Settings::default();
-        assert!(s.cleanup && s.efficiency && s.comments && !s.compact && !s.always_on_top);
+        assert!(
+            s.cleanup && s.efficiency && s.comments && s.autoplay && !s.compact && !s.always_on_top
+        );
         assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), s);
         assert!(serde_json::from_str::<Settings>(r#"{"command":"delete"}"#).is_err());
+    }
+
+    #[test]
+    fn page_messages_are_settings_or_now_playing_only() {
+        let parse = |json| serde_json::from_str::<Message>(json).ok();
+        let mini = Settings { compact: true, ..Settings::default() };
+        assert_eq!(parse(r#"{"compact":true}"#), Some(Message::Settings(mini)));
+        let playing = NowPlaying { now: Some("Track - Artist".into()) };
+        assert_eq!(parse(r#"{"now":"Track - Artist"}"#), Some(Message::Now(playing)));
+        assert_eq!(parse(r#"{"now":null}"#), Some(Message::Now(NowPlaying { now: None })));
+        assert_eq!(parse(r#"{"command":"delete"}"#), None);
     }
 
     #[test]

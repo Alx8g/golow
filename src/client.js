@@ -4,8 +4,9 @@
       !['soundcloud.com', 'www.soundcloud.com'].includes(location.hostname)) return;
   if (window.__scClient) return;
 
-  const KEYS = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments'];
-  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true}, window.__scInitialSettings);
+  const KEYS = ['cleanup', 'efficiency', 'compact', 'always_on_top', 'comments', 'autoplay'];
+  const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true},
+    window.__scInitialSettings);
   // Same-origin preferences avoid briefly restoring old startup values on each
   // full navigation. Rust validates and owns the persisted native settings.
   try {
@@ -50,7 +51,7 @@
   // it exactly while SoundCloud's own rules keep the button hidden.
   const idleSpinners = ['.playableTile[data-playbutton="never"] .playableTile__playButton',
     '.playableTile[data-playbutton="hover"]:not(.m-playing) .playableTile__artwork:not(:hover) .playableTile__playButton:not(.forceVisibility)'];
-  let host = null, shadow = null, panel = null, placer = null, wheelBar = null;
+  let host = null, shadow = null, panel = null, placer = null, wheelBar = null, nowPlaying, autoplayBusy = false;
   const $ = id => shadow.getElementById(id);
   const send = value => window.ipc?.postMessage?.(JSON.stringify(value));
   const save = () => {
@@ -133,11 +134,38 @@
         const up = event.deltaY < 0;
         document.dispatchEvent(new KeyboardEvent('keydown', {key: up ? 'ArrowUp' : 'ArrowDown', keyCode: up ? 38 : 40, shiftKey: true, bubbles: true}));
       }, {passive: false});
+      new MutationObserver(watchPlayer).observe(bar, {subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'title']});
+      watchPlayer();
     }
     const target = document.querySelector(settings.compact ? '.playControls__elements' : '.header__right > .header__navMenu');
     if (!target || placed()) return;
     host.removeAttribute('data-floating');
     settings.compact ? target.append(host) : target.before(host);
+  }
+  // Tells the app what is playing (window title, close to tray), and switches SoundCloud's
+  // autoplay station back off whenever it re-enables it against the user's choice.
+  function watchPlayer() {
+    const title = document.querySelector('.playControls__play.playing') && document.querySelector('.playbackSoundBadge__titleLink')?.title;
+    const now = title ? `${title} – ${document.querySelector('.playbackSoundBadge__lightLink')?.title || ''}` : null;
+    if (now !== nowPlaying) {
+      send({now: nowPlaying = now});
+      if (now) autoplayOff();
+    }
+    if (!settings.autoplay) document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
+  }
+  // SoundCloud only renders its autoplay switch inside the open queue panel, and turns it
+  // back on as tracks change. Open the panel invisibly, switch it off, close it again.
+  async function autoplayOff() {
+    const button = document.querySelector('.playbackSoundBadge__showQueue'), queue = document.querySelector('.playControls__queue');
+    if (settings.autoplay || autoplayBusy || !button || !queue || document.querySelector('.queueFallback__toggle')) return;
+    autoplayBusy = true;
+    queue.style.visibility = 'hidden';
+    button.click();
+    for (let i = 0; i < 30 && !document.querySelector('.queueFallback__toggle'); i++) await new Promise(r => setTimeout(r, 50));
+    document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
+    button.click();
+    queue.style.visibility = '';
+    autoplayBusy = false;
   }
   const placed = () => host.isConnected && !host.hasAttribute('data-floating') &&
     host.parentElement.matches(settings.compact ? '.playControls__elements' : '.header__right');
@@ -152,6 +180,7 @@
   function apply() {
     restyle();
     place();
+    if (wheelBar) watchPlayer();
     if (!panel) return;
     for (const key of KEYS) $(key).checked = settings[key];
     $('recovery').hidden = !recovery;
@@ -171,6 +200,7 @@
         <label>Mini player<input id="compact" type="checkbox" role="switch"></label>
         <label>Keep on top<input id="always_on_top" type="checkbox" role="switch"></label>
         <label>Waveform comments<input id="comments" type="checkbox" role="switch"></label>
+        <label>Autoplay related tracks<input id="autoplay" type="checkbox" role="switch"></label>
         <p id="recovery" hidden>Cleanup is off for this page (noclean).</p>
         <a id="quality" href="https://soundcloud.com/settings/streaming">Audio quality<span aria-hidden="true">›</span></a>`;
       shadow.appendChild(panel);
@@ -189,6 +219,10 @@
   });
   document.addEventListener('click', event => {
     if (panel && !panel.hidden && !event.composedPath().includes(host)) openSettings(false);
+    // SoundCloud's own autoplay switch sets the remembered choice too.
+    if (event.isTrusted && event.target.closest?.('.queueFallback__toggle')) {
+      setTimeout(() => change('autoplay', !!document.querySelector('.queueFallback__toggle .sc-toggle-on')));
+    }
   });
   window.addEventListener('pageshow', place);
   window.__scClient = Object.freeze({
