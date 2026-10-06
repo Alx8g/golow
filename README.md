@@ -41,6 +41,17 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 **The window.** The title shows the playing track, so the taskbar does too, and the taskbar thumbnail has previous, play and next buttons. Links to other sites, such as an artist's website, open in your browser. `Ctrl` with the mouse wheel zooms and the zoom is remembered; the mouse's back and forward buttons work as in a browser. You can choose the start page, including the page you had open last. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
 
+**Your library.**
+- A weekly backup of every like and playlist track lives in GoLow's folder, outside the browser profile. When tracks vanish, the Library tab lists them, split into tracks gone from SoundCloud and tracks no longer in your likes or playlists, with what each was called. Likes export to a spreadsheet.
+- Playlists you own warn as they near SoundCloud's 500-track limit.
+- Stats shows your top artists, tracks and genres for the last week, month, year or all time, from a private log GoLow keeps of what you play.
+- Following lists everyone you follow against the 2,000 limit, and filters to who does not follow back, who never uploaded, and small accounts.
+- Folders group your playlists on the Library page. Clearing a queue of more than 10 tracks asks first.
+
+**Discovery.**
+- Radar lists what the artists you follow uploaded in the last week or month, leaving out reposts, and can send a Windows notification for new releases while GoLow runs.
+- Lyrics shows synced lyrics for the playing track from LRCLIB, a free open lyrics database, with the current line marked; clicking a line plays from there. Only the artist, title and length are sent, and only while the Lyrics tab is open.
+
 **Control from anywhere.**
 - System-wide shortcuts play, pause, skip, seek, like, bookmark and change volume from any app. They are off until you switch them on, use `Ctrl+Alt+Shift` with a letter by default, and can be changed by pressing the keys you want.
 - The phone remote is a page your phone opens from a QR code on the same Wi-Fi, with play, pause, skip, volume, like and a seek bar. Windows asks once whether GoLow may use private networks. The address carries a random key, and the remote can only press GoLow's player buttons.
@@ -48,7 +59,7 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 **Updates and accounts.** GoLow checks GitHub for a new release once a day and offers it; it installs only when you say so, after checking the download against its published SHA-256, and keeps the previous build. Accounts lets you add another SoundCloud account with its own sign-in, settings and history, and switch between them.
 
-**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`, grouped into Interface, Playback, Mixes and podcasts, Lists and feed, Sharing and App. Sharing holds Discord status, which shows what you are listening to on your Discord profile, and Scrobble to Last.fm, which signs in through your browser the first time; both are off until you switch them on. The GoLow panel, from the list icon in the player bar or `Ctrl+.`, holds the tracklist, Continue and the blocklist. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
+**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`, grouped into Interface, Playback, Mixes and podcasts, Lists and feed, Sharing and App. Sharing holds Discord status, which shows what you are listening to on your Discord profile, and Scrobble to Last.fm, which signs in through your browser the first time; both are off until you switch them on. The GoLow panel, from the list icon in the player bar or `Ctrl+.`, holds Now (tracklist and bookmarks), Lyrics, Continue, Library, Stats, Radar, Following and the blocklist. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
 
 **Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
 

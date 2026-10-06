@@ -159,6 +159,15 @@ impl Services {
                 }
                 Ok(Value::Null)
             }
+            "lyrics" => {
+                let (artist, title) = (text(args, "artist").unwrap_or_default().chars().take(200).collect::<String>(),
+                    text(args, "title").unwrap_or_default().chars().take(300).collect::<String>());
+                let seconds = args["seconds"].as_u64().unwrap_or(0).min(24 * 3600) as u32;
+                if title.is_empty() {
+                    return Answer::Now(Err("no title".into()));
+                }
+                return self.later(call.id, move || Ok(crate::lyrics::find(&artist, &title, seconds)));
+            }
             "update_check" => {
                 return self.later(call.id, || {
                     Ok(update::check().map_or(Value::Null, |release| json!({"version": release.version, "page": release.page})))
