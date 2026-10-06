@@ -22,7 +22,8 @@ const STYLE = `:host{font:13px/1.4 system-ui,sans-serif;color:#eee;color-scheme:
   .list li:hover{background:#ffffff0d}.list li.current{background:#5cf2a81f}.grow{flex:1;min-width:0}
   .clip{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.time{flex:none;color:#5cf2a8;font-variant-numeric:tabular-nums;cursor:pointer}
   .dim{color:#888}.bar{height:3px;border-radius:2px;background:#333;overflow:hidden}.bar>i{display:block;height:100%;background:#f50}
-  a{color:#5cf2a8}.title{margin:4px 8px 0;font-size:15px;font-weight:600}`;
+  a{color:#5cf2a8}.title{margin:4px 8px 0;font-size:15px;font-weight:600}
+  .lyrics li{font-size:15px;color:#999;cursor:pointer}.lyrics li.current{color:#fff;font-weight:600}`;
 
 function shadowHost(id, extra = '') {
   const host = h('div', {id});
@@ -194,7 +195,7 @@ const [overlay, overlayRoot] = shadowHost('golow-overlay', `:host{position:fixed
   .menu{position:absolute;min-width:180px;padding:4px;pointer-events:auto}
   #toasts{position:absolute;right:16px;bottom:64px;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
   .toast{display:flex;align-items:center;gap:12px;max-width:420px;padding:10px 12px;pointer-events:auto}`);
-const tabs = [];   // {id, label, order, render(body)}
+const tabs = [];   // {id, label, order, aside: only listed while open, render(body)}
 let drawer = null, drawerTab = null;
 function ensureOverlay() { if (!overlay.isConnected && document.body) document.body.append(overlay); }
 function openPanel(id = drawerTab || tabs[0]?.id, toggle = false) {
@@ -208,7 +209,7 @@ function openPanel(id = drawerTab || tabs[0]?.id, toggle = false) {
   drawerTab = id;
   const strip = overlayRoot.getElementById('tabs');
   tabs.sort((a, b) => a.order - b.order);
-  strip.replaceChildren(...tabs.map(tab => h('button', {type: 'button', role: 'tab', 'aria-selected': String(tab.id === id), text: tab.label, onclick: () => openPanel(tab.id)})),
+  strip.replaceChildren(...tabs.filter(tab => !tab.aside || tab.id === id).map(tab => h('button', {type: 'button', role: 'tab', 'aria-selected': String(tab.id === id), text: tab.label, onclick: () => openPanel(tab.id)})),
     iconButton('close', 'Close panel', closePanel));
   refreshPanel(id);
   barButton('panel')?.classList.add('on');
@@ -228,7 +229,7 @@ function refreshPanel(id) {
 }
 const panelOpen = id => !!drawer && !drawer.hidden && drawerTab === id;
 
-let openMenu = null;
+let openMenu = null, menuAnchor = null;
 function popup(anchor, items) {
   ensureOverlay();
   openMenu?.remove();
@@ -237,6 +238,7 @@ function popup(anchor, items) {
     ? h('h3', {text: item.heading})
     : h('button', {cls: 'row', type: 'button', role: 'menuitemradio', 'aria-checked': String(!!item.checked), onclick: () => { closeMenu(); item.action(); }},
       item.label, item.checked ? h('span', {text: '✓'}) : null)));
+  menuAnchor = anchor;
   openMenu.style.left = Math.max(8, Math.min(box.left, innerWidth - 200)) + 'px';
   openMenu.style.bottom = (innerHeight - box.top + 6) + 'px';
   overlayRoot.append(openMenu);
@@ -268,5 +270,6 @@ document.addEventListener('keydown', event => {
 document.addEventListener('click', event => {
   const path = event.composedPath();
   if (panel && !panel.hidden && !path.includes(host)) openSettings(false);
-  if (openMenu && !path.includes(openMenu) && !path.includes(bar)) closeMenu();
+  // The click that opened a menu reaches here too; only clicks elsewhere close it.
+  if (openMenu && !path.includes(openMenu) && !path.includes(menuAnchor)) closeMenu();
 });
