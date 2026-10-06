@@ -57,8 +57,12 @@ xhr.open = function (method, url, ...rest) {
   }
   return xhrOpen.call(this, method, url, ...rest);
 };
+const sentHeaders = new WeakMap();
 xhr.setRequestHeader = function (name, value) {
-  if (pending.has(this) && /^authorization$/i.test(name) && /^OAuth \S+$/.test(value)) session.token = value;
+  if (pending.has(this)) {
+    if (/^authorization$/i.test(name) && /^OAuth \S+$/.test(value)) session.token = value;
+    sentHeaders.set(this, [...sentHeaders.get(this) || [], [name, value]]);
+  }
   return xhrHeader.call(this, name, value);
 };
 function tapped() {
@@ -67,8 +71,64 @@ function tapped() {
   if (this.status < 200 || this.status >= 300 || !['', 'text', 'json'].includes(this.responseType)) return;
   let json;
   try { json = this.responseType === 'json' ? this.response : JSON.parse(this.responseText); } catch { return; }
+  if (!fromCache.has(this)) keepInstant(raw, this);
   received(raw, json);
 }
+
+// Instant Home. Home waits on one slow API call (two seconds or more) for your mixes. The last
+// answer, kept in GoLow's folder, is handed to SoundCloud at once on startup, and a fresh copy
+// is fetched in the background for next time. Only for the account that fetched it, and only
+// when it is under a day old.
+menu.push({section: 'Interface', key: 'instant_home', label: 'Instant Home', def: true,
+  hint: 'Shows your last Home mixes straight away at startup, and fetches fresh ones for next time.'});
+const INSTANT = '/mixed-selections', DAY_MS = 86400000;
+const fromCache = new WeakSet(), refreshes = new WeakSet();
+const instant = {cache: null, served: false, savedAt: 0};
+instant.ready = pref('instant_home') && window.ipc
+  ? call('load', {name: 'instant-home'}, 3000).then(text => { instant.cache = JSON.parse(text || 'null'); }, () => {})
+  : Promise.resolve();
+// A fingerprint of the session's sign-in, so one account's Home never shows for another.
+const fingerprint = text => { let hash = 0x811c9dc5; for (const c of String(text)) hash = Math.imul(hash ^ c.charCodeAt(0), 0x01000193) >>> 0; return hash.toString(16); };
+const authOf = request => (sentHeaders.get(request) || []).find(([name]) => /^authorization$/i.test(name))?.[1] || '';
+function keepInstant(raw, request) {
+  if (new URL(raw).pathname !== INSTANT || !pref('instant_home') || Date.now() - instant.savedAt < 10 * 60000 || !window.ipc) return;
+  instant.savedAt = Date.now();
+  const entry = {at: Date.now(), auth: fingerprint(authOf(request)), body: request.responseText};
+  call('save', {name: 'instant-home', data: JSON.stringify(entry)}).catch(() => {});
+}
+function respond(request, raw, body) {
+  fromCache.add(request);
+  const values = {readyState: 4, status: 200, statusText: 'OK', responseURL: raw, responseText: body,
+    response: request.responseType === 'json' ? JSON.parse(body) : body};
+  for (const [name, value] of Object.entries(values)) Object.defineProperty(request, name, {value, configurable: true});
+  request.getAllResponseHeaders = () => 'content-type: application/json; charset=utf-8\r\n';
+  request.getResponseHeader = name => (/^content-type$/i.test(name) ? 'application/json; charset=utf-8' : null);
+  for (const type of ['readystatechange', 'load', 'loadend']) request.dispatchEvent(new ProgressEvent(type));
+}
+const xhrSend = xhr.send;
+xhr.send = function (...args) {
+  const raw = pending.get(this);
+  if (!raw || refreshes.has(this) || instant.served || !pref('instant_home') || performance.now() > 20000 || new URL(raw).pathname !== INSTANT) {
+    return xhrSend.apply(this, args);
+  }
+  instant.served = true;
+  const request = this;
+  // The saved copy is read from disk at startup; wait briefly for it rather than miss it.
+  Promise.race([instant.ready, wait(400)]).then(() => {
+    const cache = instant.cache;
+    if (!cache || Date.now() - cache.at > DAY_MS || cache.auth !== fingerprint(authOf(request))) return xhrSend.apply(request, args);
+    respond(request, raw, cache.body);
+    // Fetch the fresh copy once startup has settled, with the same headers, for next time.
+    setTimeout(() => {
+      const fresh = new XMLHttpRequest();
+      refreshes.add(fresh);
+      fresh.open('GET', raw);
+      for (const [name, value] of sentHeaders.get(request) || []) fresh.setRequestHeader(name, value);
+      instant.savedAt = 0;
+      fresh.send();
+    }, 5000);
+  });
+};
 // The redesigned pages use fetch for some calls.
 const nativeFetch = window.fetch;
 window.fetch = function (input, init) {

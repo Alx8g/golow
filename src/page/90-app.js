@@ -6,6 +6,8 @@ menu.push(
   {section: 'Sharing', key: 'now_file', label: 'Now-playing file for stream overlays',
     hint: 'Writes "Artist - Title" to now-playing.txt in GoLow\'s folder, for OBS and similar.'},
   {section: 'Sharing', key: 'open_app_folder', type: 'button', label: 'Open GoLow\'s folder', action: () => call('open_folder', {which: 'app'}).catch(() => {})},
+  {section: 'App', key: 'background', label: 'Start with Windows, ready in the tray', hint: 'GoLow loads hidden when you sign in to Windows, so opening it is instant.'},
+  {section: 'App', key: 'tray', label: 'Keep running in the tray when closed', hint: 'Closing the window keeps GoLow loaded, so it opens instantly next time.'},
   {section: 'App', key: 'start_page', label: 'Start page', type: 'select', options: [['discover', 'Home'], ['feed', 'Feed'], ['likes', 'Likes'],
     ['library', 'Library'], ['history', 'History'], ['last', 'Where I left off']]},
   {section: 'App', key: 'hotkeys', label: 'System-wide shortcuts', hint: 'Control GoLow from any app. Ctrl+Alt+Shift with a letter by default.'},

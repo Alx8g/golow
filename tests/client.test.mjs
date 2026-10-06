@@ -156,7 +156,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 19, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 21, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
