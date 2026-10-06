@@ -39,9 +39,16 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 - Pressing play after a restart picks up where you left off.
 - The mouse wheel over the speaker icon changes volume. Keyboard media keys and the Windows media overlay work as usual.
 
-**The window.** The title shows the playing track, so the taskbar does too. Links to other sites, such as an artist's website, open in your browser. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
+**The window.** The title shows the playing track, so the taskbar does too, and the taskbar thumbnail has previous, play and next buttons. Links to other sites, such as an artist's website, open in your browser. `Ctrl` with the mouse wheel zooms and the zoom is remembered; the mouse's back and forward buttons work as in a browser. You can choose the start page, including the page you had open last. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
 
-**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`, grouped into Interface, Playback, Mixes and podcasts, Lists and feed, and Sharing. Sharing holds Discord status, which shows what you are listening to on your Discord profile, and Scrobble to Last.fm, which signs in through your browser the first time; both are off until you switch them on. The GoLow panel, from the list icon in the player bar or `Ctrl+.`, holds the tracklist, Continue and the blocklist. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
+**Control from anywhere.**
+- System-wide shortcuts play, pause, skip, seek, like, bookmark and change volume from any app. They are off until you switch them on, use `Ctrl+Alt+Shift` with a letter by default, and can be changed by pressing the keys you want.
+- The phone remote is a page your phone opens from a QR code on the same Wi-Fi, with play, pause, skip, volume, like and a seek bar. Windows asks once whether GoLow may use private networks. The address carries a random key, and the remote can only press GoLow's player buttons.
+- For stream overlays, GoLow can write the playing track to `now-playing.txt`.
+
+**Updates and accounts.** GoLow checks GitHub for a new release once a day and offers it; it installs only when you say so, after checking the download against its published SHA-256, and keeps the previous build. Accounts lets you add another SoundCloud account with its own sign-in, settings and history, and switch between them.
+
+**Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`, grouped into Interface, Playback, Mixes and podcasts, Lists and feed, Sharing and App. Sharing holds Discord status, which shows what you are listening to on your Discord profile, and Scrobble to Last.fm, which signs in through your browser the first time; both are off until you switch them on. The GoLow panel, from the list icon in the player bar or `Ctrl+.`, holds the tracklist, Continue and the blocklist. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
 
 **Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
 
@@ -57,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Restart
 
 This installs to `%LOCALAPPDATA%\Programs\GoLow` with Start menu and desktop shortcuts and an entry in Installed apps. The previous build is kept as `golow.previous.exe`. You can also run `golow.exe` directly without installing. The executable is not code-signed yet, so SmartScreen may warn on first launch.
 
-Your sign-in and settings live in `%APPDATA%\golow`. Builds released as SoundCloud Go+ used `%APPDATA%\soundcloud-go-client`, and GoLow keeps using that folder when it exists, so you stay signed in. Uninstalling keeps this folder.
+Your sign-in and settings live in `%APPDATA%\golow`. Builds released as SoundCloud Go+ used `%APPDATA%\soundcloud-go-client`, and GoLow keeps using that folder when it exists, so you stay signed in. Uninstalling keeps this folder and removes the notification registration. Exports go to `Documents\GoLow`.
 
 ## Build from source
 

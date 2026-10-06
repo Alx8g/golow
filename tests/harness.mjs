@@ -65,7 +65,11 @@ export async function withEdge({routes, api = {}}, run) {
     };
     // Like WebView2, inject before any page script. The IPC stub records what the app would get.
     await cdp('Page.enable');
-    await cdp('Page.addScriptToEvaluateOnNewDocument', {source: 'window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};'});
+    // As main.rs injects it: what the page knows about the app build.
+    const app = {version: '0.0.0', profile: '', lastfm: false, hotkeys: {toggle: 'Ctrl+Alt+Shift+P', next: 'Ctrl+Alt+Shift+N', previous: 'Ctrl+Alt+Shift+B',
+      back: 'Ctrl+Alt+Shift+Comma', forward: 'Ctrl+Alt+Shift+Period', like: 'Ctrl+Alt+Shift+L', volume_up: 'Ctrl+Alt+Shift+Equal',
+      volume_down: 'Ctrl+Alt+Shift+Minus', bookmark: 'Ctrl+Alt+Shift+K', show: 'Ctrl+Alt+Shift+S'}};
+    await cdp('Page.addScriptToEvaluateOnNewDocument', {source: `window.__scApp=${JSON.stringify(app)};window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};`});
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: fixture});
     await resize(1280);
     await cdp('Fetch.enable', {patterns: [{urlPattern: 'https://api-v2.soundcloud.com/*'}]});

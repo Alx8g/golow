@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>GoLow remote</title>
+<style>
+  :root{color-scheme:dark;font:16px/1.4 system-ui,sans-serif}
+  body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:24px;box-sizing:border-box;background:#111;color:#eee}
+  img{width:min(70vw,320px);aspect-ratio:1;border-radius:12px;object-fit:cover;background:#222}
+  h1{margin:0;font-size:20px;text-align:center}p{margin:0;color:#999;text-align:center}
+  .bar{width:min(86vw,420px);height:6px;border-radius:3px;background:#333;overflow:hidden;touch-action:none}.bar i{display:block;height:100%;width:0;background:#f50}
+  .times{display:flex;justify-content:space-between;width:min(86vw,420px);color:#999;font-size:13px;font-variant-numeric:tabular-nums}
+  .row{display:flex;gap:14px;align-items:center}
+  button{width:64px;height:64px;border:0;border-radius:50%;background:#222;color:#eee;font-size:15px}
+  button.big{width:84px;height:84px;background:#f50;color:#fff;font-size:26px}button:active{transform:scale(.94)}
+  .small button{width:52px;height:52px;font-size:14px}
+  #status{min-height:1.4em;font-size:13px}
+</style>
+</head>
+<body>
+<img id="art" alt="">
+<div><h1 id="title">GoLow remote</h1><p id="artist">Connecting…</p></div>
+<div class="bar" id="bar"><i id="fill"></i></div>
+<div class="times"><span id="passed">0:00</span><span id="total">0:00</span></div>
+<div class="row">
+  <button data-cmd="previous" aria-label="Previous">⏮</button>
+  <button data-cmd="back" aria-label="Back">−10</button>
+  <button data-cmd="toggle" class="big" id="toggle" aria-label="Play or pause">▶</button>
+  <button data-cmd="forward" aria-label="Forward">+30</button>
+  <button data-cmd="next" aria-label="Next">⏭</button>
+</div>
+<div class="row small">
+  <button data-cmd="volume_down" aria-label="Volume down">Vol −</button>
+  <button data-cmd="like" aria-label="Like">♥</button>
+  <button data-cmd="volume_up" aria-label="Volume up">Vol +</button>
+</div>
+<p id="status"></p>
+<script>
+'use strict';
+const base = location.pathname.replace(/\/$/, '');
+const $ = id => document.getElementById(id);
+let state = null;
+const clock = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`; };
+const position = () => !state ? 0 : Math.min(state.total, state.passed + (state.playing ? (Date.now() - state.at) / 1000 : 0));
+function draw() {
+  if (!state) return;
+  $('title').textContent = state.title || 'Nothing playing';
+  $('artist').textContent = state.artist || '';
+  $('toggle').textContent = state.playing ? '❚❚' : '▶';
+  const art = (state.artwork || '').replace('-large.', '-t500x500.');
+  if (/^https:\/\/i1\.sndcdn\.com\//.test(art) && $('art').src !== art) $('art').src = art;
+  $('passed').textContent = clock(position());
+  $('total').textContent = clock(state.total);
+  $('fill').style.width = state.total ? (position() / state.total * 100) + '%' : '0';
+}
+async function refresh() {
+  try {
+    state = await (await fetch(base + '/state', {cache: 'no-store'})).json();
+    $('status').textContent = '';
+  } catch {
+    $('status').textContent = 'GoLow is not reachable. Is it open on your PC?';
+  }
+  draw();
+}
+for (const button of document.querySelectorAll('[data-cmd]')) {
+  button.addEventListener('click', async () => {
+    try { await fetch(`${base}/cmd/${button.dataset.cmd}`, {method: 'POST'}); } catch {}
+    setTimeout(refresh, 400);
+  });
+}
+$('bar').addEventListener('click', async event => {
+  if (!state?.total) return;
+  const box = event.currentTarget.getBoundingClientRect();
+  await fetch(`${base}/seek/${Math.round((event.clientX - box.left) / box.width * state.total)}`, {method: 'POST'}).catch(() => {});
+  setTimeout(refresh, 400);
+});
+// Ask for the state every few seconds while the page is open; the clock runs locally.
+(function loop() { if (document.visibilityState === 'visible') refresh(); setTimeout(loop, 3000); })();
+setTimeout(function tick() { draw(); setTimeout(tick, 500); }, 500);
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refresh());
+</script>
+</body>
+</html>
