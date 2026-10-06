@@ -26,3 +26,24 @@ fn open(target: &str) -> bool {
 pub fn open_url(url: &Url) -> bool {
     url.scheme() == "https" && open(url.as_str())
 }
+
+pub fn open_folder(path: &std::path::Path) -> bool {
+    path.is_dir() && open(&path.to_string_lossy())
+}
+
+/// Opens File Explorer with `path` selected.
+pub fn reveal(path: &std::path::Path) -> bool {
+    let (verb, explorer) = (wide("open"), wide("explorer.exe"));
+    let select = wide(&format!("/select,\"{}\"", path.display()));
+    let code = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            explorer.as_ptr(),
+            select.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    code as usize > 32
+}

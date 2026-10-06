@@ -2,6 +2,8 @@ window.addEventListener('pageshow', place);
 window.__scClient = Object.freeze({
   update(value) { Object.assign(settings, value); save(); apply(); },
   openSettings,
+  // News from the app: hotkey status, an update, an install finishing.
+  event(name, data) { emit('app', name, data); },
   // Hotkeys, the tray, taskbar buttons and the phone remote all arrive here.
   command(name, arg) { if (Object.hasOwn(commands, name)) return commands[name](arg); },
   reply(id, value, error) {
