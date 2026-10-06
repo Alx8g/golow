@@ -8,7 +8,7 @@ if (window.__scClient) return;
 // Settings the app persists in settings.json; Rust validates every key and value.
 const settings = Object.assign({cleanup: true, efficiency: true, compact: false, always_on_top: false, comments: true, autoplay: true,
   mixes: true, played: true, top_comments: false, discord: false, lastfm: false, hotkeys: false, shortcuts: {}, start_page: 'discover',
-  gpu: true, now_file: false, remote: false, notify: false, updates: true}, window.__scInitialSettings);
+  gpu: true, now_file: false, remote: false, notify: false, updates: true, background: false, tray: false}, window.__scInitialSettings);
 const NATIVE = Object.keys(settings);
 // Same-origin copies avoid briefly restoring startup values on each full navigation.
 try {
@@ -16,6 +16,22 @@ try {
   for (const key of NATIVE) if (typeof cached[key] === typeof settings[key] && cached[key] !== null) settings[key] = cached[key];
 } catch {}
 const recovery = new URLSearchParams(location.search).has('noclean') || /(?:^#|[&#])noclean(?:[=&]|$)/.test(location.hash);
+
+// Start the connections to SoundCloud's API and image servers while its code is still loading,
+// instead of when the first request goes out. The API is called without cookies, so its hint is
+// anonymous to share that connection.
+function preconnect() {
+  const root = document.head || document.documentElement;
+  if (!root) return false;
+  for (const [href, anonymous] of [['https://api-v2.soundcloud.com', true], ['https://i1.sndcdn.com', false]]) {
+    const link = document.createElement('link');
+    Object.assign(link, {rel: 'preconnect', href});
+    if (anonymous) link.crossOrigin = 'anonymous';
+    root.append(link);
+  }
+  return true;
+}
+if (!preconnect()) new MutationObserver((_, observer) => preconnect() && observer.disconnect()).observe(document, {childList: true});
 
 // Page-only state (speeds, bookmarks, lists) lives in SoundCloud's storage for this profile.
 const stored = (key, fallback) => { try { return JSON.parse(localStorage.getItem('golow-' + key)) ?? fallback; } catch { return fallback; } };

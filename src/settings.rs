@@ -36,6 +36,10 @@ pub struct Settings {
     pub notify: bool,
     /// Checks GitHub for a newer GoLow once a day.
     pub updates: bool,
+    /// Starts hidden in the tray at Windows sign-in, so opening GoLow is instant.
+    pub background: bool,
+    /// Closing the window keeps GoLow running in the tray instead of quitting.
+    pub tray: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +100,8 @@ impl Default for Settings {
             remote: false,
             notify: false,
             updates: true,
+            background: false,
+            tray: false,
         }
     }
 }

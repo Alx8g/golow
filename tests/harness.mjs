@@ -18,14 +18,16 @@ export const edge = [process.env.EDGE_PATH, 'C:/Program Files (x86)/Microsoft/Ed
 export const fixture = script.replace(/location\.protocol !== 'https:' \|\|\s*!\['soundcloud\.com', 'www\.soundcloud\.com'\]\.includes\(location\.hostname\)/, 'false');
 
 // routes: [[prefix, html]], first match wins. api: {pathPart: json} answers for api-v2 requests.
-export async function withEdge({routes, api = {}}, run) {
+// inject: extra script that runs before the page script, such as a stand-in for the app.
+// args: extra browser flags.
+export async function withEdge({routes, api = {}, inject = '', args = []}, run) {
   if (fixture === script) throw new Error('origin guard not found in the page script');
   const server = http.createServer((req, res) => res.writeHead(200, {'content-type': 'text/html'})
     .end(routes.find(([prefix]) => req.url.startsWith(prefix))?.[1] ?? routes.at(-1)[1]));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'golow-test-'));
   const browser = spawn(edge, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
-    '--autoplay-policy=no-user-gesture-required', '--mute-audio', 'about:blank']);
+    '--autoplay-policy=no-user-gesture-required', '--mute-audio', ...args, 'about:blank']);
   try {
     // Edge may still hold the file open while writing it, so retry until a port is readable.
     let port;
@@ -72,6 +74,7 @@ export async function withEdge({routes, api = {}}, run) {
       back: 'Ctrl+Alt+Shift+Comma', forward: 'Ctrl+Alt+Shift+Period', like: 'Ctrl+Alt+Shift+L', volume_up: 'Ctrl+Alt+Shift+Equal',
       volume_down: 'Ctrl+Alt+Shift+Minus', bookmark: 'Ctrl+Alt+Shift+K', show: 'Ctrl+Alt+Shift+S'}};
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: `window.__scApp=${JSON.stringify(app)};window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};`});
+    if (inject) await cdp('Page.addScriptToEvaluateOnNewDocument', {source: inject});
     await cdp('Page.addScriptToEvaluateOnNewDocument', {source: fixture});
     await resize(1280);
     await cdp('Fetch.enable', {patterns: [{urlPattern: 'https://api-v2.soundcloud.com/*'}]});

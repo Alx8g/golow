@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod calls;
 mod discord;
 mod filter;
@@ -76,24 +77,28 @@ struct Popup {
     window: Window,
 }
 
-/// `--profile NAME` runs a separate SoundCloud account; `--after PID` waits for a closing copy.
+/// `--profile NAME` runs a separate SoundCloud account; `--after PID` waits for a closing copy;
+/// `--background` starts hidden in the tray, as at Windows sign-in.
 struct Args {
     profile: String,
     after: Option<u32>,
+    background: bool,
 }
 
 fn args() -> Args {
-    let (mut profile, mut after, mut args) = (String::new(), None, std::env::args().skip(1));
+    let (mut profile, mut after, mut background) = (String::new(), None, false);
+    let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--profile" => {
                 profile = args.next().filter(|name| calls::valid_profile(name)).unwrap_or_default()
             }
             "--after" => after = args.next().and_then(|pid| pid.parse().ok()),
+            "--background" => background = true,
             _ => {}
         }
     }
-    Args { profile, after }
+    Args { profile, after, background }
 }
 
 fn wait_for(pid: u32) {
@@ -230,9 +235,14 @@ fn check_updates(dir: &Path, proxy: EventLoopProxy<Action>) {
 }
 
 /// The page script and what it needs to know about this build.
-fn init_script(prefs: &Settings, profile: &str) -> Result<String, serde_json::Error> {
+fn init_script(
+    prefs: &Settings,
+    profile: &str,
+    launched: u64,
+) -> Result<String, serde_json::Error> {
     let app = json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "started": launched,
         "profile": profile,
         "lastfm": lastfm::KEY.is_some(),
         "hotkeys": hotkeys::ACTIONS.iter().map(|(action, keys)| (action.to_string(), json!(keys))).collect::<serde_json::Map<_, _>>(),
@@ -247,7 +257,9 @@ fn init_script(prefs: &Settings, profile: &str) -> Result<String, serde_json::Er
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
-    let Args { profile, after } = args();
+    // Wall-clock launch time, so the page can place its own milestones on the same timeline.
+    let launched = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let Args { profile, after, background } = args();
     if let Some(pid) = after {
         wait_for(pid);
     }
@@ -322,8 +334,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let (w, h) = (env!("APP_ICON_WIDTH").parse()?, env!("APP_ICON_HEIGHT").parse()?);
     let icon = include_bytes!(concat!(env!("OUT_DIR"), "/icon.rgba"));
-    let window =
-        builder.with_window_icon(Icon::from_rgba(icon.to_vec(), w, h).ok()).build(&event_loop)?;
+    let window = builder
+        .with_window_icon(Icon::from_rgba(icon.to_vec(), w, h).ok())
+        .with_visible(!background)
+        .build(&event_loop)?;
     instance.mark(window.hwnd());
     log(&dir, started, "window_built");
     let mut normal_size = window.inner_size();
@@ -360,7 +374,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut context = WebContext::new(Some(dir.join("webview")));
-    let script = init_script(&prefs, &profile)?;
+    let script = init_script(&prefs, &profile, launched)?;
     let discord = discord::start(discord::APP_ID);
     let lastfm = lastfm::KEY.map(|key| lastfm::start(key, dir.clone()));
     if prefs.lastfm {
@@ -368,6 +382,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut services = Services::new(base.clone(), dir.clone(), profile.clone(), proxy.clone());
     services.set_remote(prefs.remote);
+    // Keeps the sign-in entry pointing at this copy of GoLow, wherever it now lives.
+    if prefs.background {
+        autostart::set(true, &profile);
+    }
     if prefs.updates {
         check_updates(&dir, proxy.clone());
     }
@@ -487,8 +505,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (page, _) => page.path().into(),
     };
     view.load_url(&format!("https://soundcloud.com{start}"))?;
-    let (mut save_at, mut minimized) = (None::<Instant>, false);
+    let (mut save_at, mut minimized) = (None::<Instant>, background);
     let (mut now_playing, mut tray_icon) = (None::<String>, None::<TrayIcon>);
+    // Started at sign-in: SoundCloud loads hidden, ready for the first time GoLow is opened.
+    if background {
+        tray_icon = tray(icon, w, h, &title);
+        set_background(&view, true, prefs.efficiency);
+    }
 
     event_loop.run(move |event, _, control_flow| {
         let _keep_alive = &instance;
@@ -584,6 +607,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reply(&view, call.id, result);
                 }
                 "hotkeys" => reply(&view, call.id, Ok(hotkey_status.clone())),
+                // Startup milestones the page reaches: first paint, header, player, content.
+                "timing" => {
+                    let name = call.args["name"].as_str().unwrap_or_default();
+                    let at = call.args["at"].as_u64().unwrap_or(0);
+                    if ["fcp", "lcp", "header", "player", "content"].contains(&name)
+                        && at >= launched
+                    {
+                        let elapsed = (at - launched) as f32 / 1000.0;
+                        if let Ok(mut file) =
+                            std::fs::File::options().append(true).open(dir.join("startup.log"))
+                        {
+                            let _ = writeln!(file, "t={elapsed:.2}s page_{name}");
+                        }
+                    }
+                }
                 _ => {
                     if let Answer::Now(result) = services.answer(&call) {
                         reply(&view, call.id, result);
@@ -638,6 +676,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     check_updates(&dir, proxy.clone());
                 }
                 services.set_remote(next.remote);
+                if next.background != prefs.background {
+                    autostart::set(next.background, &profile);
+                }
                 apply_window(&window, &next, &prefs, &mut normal_size);
                 prefs = next;
                 filter_prefs.set(rules(&prefs));
@@ -648,9 +689,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::WindowEvent { window_id, event, .. } if window_id == window.id() => {
                 match event {
-                    // Closing while music plays keeps it playing from the tray.
-                    WindowEvent::CloseRequested if now_playing.is_some() => {
-                        let tooltip = format!("{} · {title}", now_playing.as_deref().unwrap_or(""));
+                    // Closing while music plays keeps it playing from the tray, and so does
+                    // closing at any time with "Keep running in the tray" on.
+                    WindowEvent::CloseRequested if now_playing.is_some() || prefs.tray => {
+                        let tooltip = now_playing
+                            .as_ref()
+                            .map_or(title.clone(), |now| format!("{now} · {title}"));
                         if tray_icon.is_none() {
                             tray_icon = tray(icon, w, h, &tooltip);
                         }
