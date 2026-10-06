@@ -1,18 +1,9 @@
-// Runs src/client.js in plain contexts and in headless Microsoft Edge against synthetic
+// Runs the page script in plain contexts and in headless Microsoft Edge against synthetic
 // pages served locally. Never loads SoundCloud or an account.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import fs from 'node:fs';
-import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 import vm from 'node:vm';
-
-const script = fs.readFileSync(new URL('../src/client.js', import.meta.url), 'utf8');
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const edge = [process.env.EDGE_PATH, 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe'].find(p => p && fs.existsSync(p));
+import {edge, script, sleep, withEdge} from './harness.mjs';
 
 test('parses and has no polling or document text walkers', () => {
   new vm.Script(script);
@@ -83,7 +74,7 @@ for (const url of ['https://api-v2.soundcloud.com/stream?limit=10', 'https://api
   request.open('GET', url);
   request.send();
 }
-window.__newTrack = title => { autoplayOn = true; document.querySelector('.playbackSoundBadge__titleLink').title = title; };
+window.__newTrack = title => { autoplayOn = true; const link = document.querySelector('.playbackSoundBadge__titleLink'); link.title = title; link.setAttribute('href', '/a/' + title.replace(/\W+/g, '-')); };
 </script>
 </div></body></html>`;
 const likesPage = `<!doctype html><html><head></head><body><div id="app">
@@ -165,7 +156,7 @@ const checks = `(async () => {
   assert(!hidden('old-comment') && inFrame('avatars').display !== 'none', 'waveform comments return');
 
   shadow().getElementById('compact').click();
-  assert(sent().compact === true && Object.keys(sent()).length === 11, 'mini player sent as one bounded settings object');
+  assert(sent().compact === true && Object.keys(sent()).length === 19, 'mini player sent as one bounded settings object');
   assert(host().parentElement === byId('elements') && hidden(document.querySelector('header')) && !hidden('player'), 'mini player shows only the bar');
   assert(hidden(shadow().getElementById('open')) && !hidden(shadow().getElementById('expand')) && shadow().getElementById('panel').hidden, 'mini player offers expand');
   shadow().getElementById('expand').click();
@@ -235,7 +226,7 @@ const likesChecks = `(async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const assert = (value, message) => { if (!value) throw new Error(message); };
   for (let i = 0; i < 20 && !document.querySelector('[data-golow-tools]'); i++) await wait(50);
-  const [input, button] = document.querySelector('[data-golow-tools]').children;
+  const tools = document.querySelector('[data-golow-tools]'), input = tools.querySelector('input'), button = tools.querySelector('[data-shuffle]');
   assert(input && button, 'likes tools sit in the section header');
   input.value = 'odd';
   input.dispatchEvent(new Event('input'));
@@ -293,79 +284,25 @@ const widthChecks = width => `(() => {
 })()`;
 
 test('cleans up, styles new track pages, settings, mini player, feed filters and likes tools in a real browser', {skip: !edge && 'Microsoft Edge not found'}, async () => {
-  // Keep the top-frame guard, drop the origin check: like WebView2 here, frames get no script.
-  const fixture = script.replace(/location\.protocol !== 'https:' \|\|\s*!\['soundcloud\.com', 'www\.soundcloud\.com'\]\.includes\(location\.hostname\)/, 'false');
-  assert.notEqual(fixture, script, 'origin guard replaced in the fixture copy only');
-  const server = http.createServer((req, res) => res.writeHead(200, {'content-type': 'text/html'})
-    .end(req.url.startsWith('/n/') ? trackPage : req.url.startsWith('/you/likes') ? likesPage : page));
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'golow-test-'));
-  const browser = spawn(edge, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank']);
-  try {
-    const portFile = path.join(profile, 'DevToolsActivePort');
-    // Edge may still hold the file open while writing it, so retry until a port is readable.
-    let port;
-    for (let i = 0; i < 150 && !port; i++) {
-      try { port = fs.readFileSync(portFile, 'utf8').split('\n')[0]; } catch {}
-      if (!port) await sleep(100);
-    }
-    const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page');
-    const ws = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => Object.assign(ws, {onopen: resolve, onerror: reject}));
-    const replies = new Map();
-    let id = 0;
-    // SoundCloud's API answers come from here: a 60-minute mix, a short track, and history.
-    const api = {
-      '/stream': {collection: [{track: {permalink_url: 'https://soundcloud.com/a/long', duration: 3600000}},
-        {track: {permalink_url: 'https://soundcloud.com/a/short', duration: 200000}}, {track: {permalink_url: 'https://soundcloud.com/a/played', duration: 200000}}]},
-      '/me/play-history': {collection: [{track: {permalink_url: 'https://soundcloud.com/a/played'}}]},
-    };
-    ws.onmessage = ({data}) => {
-      const message = JSON.parse(data);
-      if (message.method === 'Fetch.requestPaused') {
-        const body = JSON.stringify(Object.entries(api).find(([key]) => message.params.request.url.includes(key))?.[1] || {});
-        ws.send(JSON.stringify({id: ++id, method: 'Fetch.fulfillRequest', params: {requestId: message.params.requestId, responseCode: 200,
-          responseHeaders: [{name: 'Content-Type', value: 'application/json'}, {name: 'Access-Control-Allow-Origin', value: '*'}], body: Buffer.from(body).toString('base64')}}));
-      }
-      replies.get(message.id)?.(message.result);
-    };
-    const cdp = (method, params) => new Promise(resolve => {
-      replies.set(++id, resolve);
-      ws.send(JSON.stringify({id, method, params}));
-    });
-    const evaluate = async expression => {
-      const result = await cdp('Runtime.evaluate', {expression, awaitPromise: true, returnByValue: true});
-      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description);
-      return result.result.value;
-    };
-    const resize = width => cdp('Emulation.setDeviceMetricsOverride', {width, height: 800, deviceScaleFactor: 1, mobile: false});
-    // Like WebView2, inject before any page script, into every frame.
-    await cdp('Page.enable');
-    await cdp('Page.addScriptToEvaluateOnNewDocument', {source: 'window.__scMessages=[];window.ipc={postMessage:s=>window.__scMessages.push(JSON.parse(s))};'});
-    await cdp('Page.addScriptToEvaluateOnNewDocument', {source: fixture});
-    await resize(1280);
-    await cdp('Fetch.enable', {patterns: [{urlPattern: 'https://api-v2.soundcloud.com/*'}]});
-    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/feed`});
-    for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete' || document.getElementById('webi').contentDocument?.readyState !== 'complete'"); i++) await sleep(100);
+  // SoundCloud's API answers: a 60-minute mix, a short track, and history.
+  const api = {
+    '/stream': {collection: [{track: {kind: 'track', permalink_url: 'https://soundcloud.com/a/long', duration: 3600000}},
+      {track: {kind: 'track', permalink_url: 'https://soundcloud.com/a/short', duration: 200000}},
+      {track: {kind: 'track', permalink_url: 'https://soundcloud.com/a/played', duration: 200000}}]},
+    '/me/play-history': {collection: [{track: {kind: 'track', permalink_url: 'https://soundcloud.com/a/played'}}]},
+  };
+  const routes = [['/n/', trackPage], ['/you/likes', likesPage], ['/', page]];
+  await withEdge({routes, api}, async ({evaluate, resize, navigate}) => {
+    await navigate('/feed', "document.readyState === 'complete' && document.getElementById('webi').contentDocument?.readyState === 'complete'");
     assert.equal(await evaluate(checks), 'ok');
     for (const width of [700, 1700]) {
       await resize(width);
       assert.equal(await evaluate(widthChecks(width)), 'ok', `${width}px`);
     }
     await resize(1280);
-    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/feed`});
-    for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete'"); i++) await sleep(100);
+    await navigate('/feed');
     assert.equal(await evaluate(resumeChecks), 'ok');
-    await cdp('Page.navigate', {url: `http://127.0.0.1:${server.address().port}/you/likes`});
-    for (let i = 0; i < 50 && await evaluate("document.readyState !== 'complete'"); i++) await sleep(100);
+    await navigate('/you/likes');
     assert.equal(await evaluate(likesChecks), 'ok');
-    ws.close();
-  } finally {
-    server.close();
-    const exited = new Promise(resolve => browser.once('exit', resolve));
-    browser.kill();
-    await Promise.race([exited, sleep(5000)]);
-    // Edge helpers can hold the temporary profile briefly after the browser exits.
-    try { fs.rmSync(profile, {recursive: true, force: true, maxRetries: 20, retryDelay: 250}); } catch {}
-  }
+  });
 });

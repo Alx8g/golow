@@ -19,7 +19,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
-      - run: node --test tests/client.test.mjs
+      - run: node --test "tests/*.test.mjs"
       - run: cargo build --locked --release
       - name: Package
         run: |
