@@ -14,7 +14,15 @@ Measured with `scripts/benchmark.py` against the last SoundCloud Go+ build, idle
 | Page layout and style work | 6 to 32 ms every second | none |
 | Private memory, all processes | 353 to 532 MiB | 321 to 384 MiB |
 
-Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering icon that spins forever, and Chromium redoes the page layout for it on every display refresh, so faster screens pay more. GoLow stops rendering that icon only while SoundCloud itself keeps it hidden. Minimized, both builds idle near 1% of one core.
+Startup is measured to the moment your music appears, signed in, with a warm cache, on a connection in New Zealand (far from SoundCloud's servers). Your Home mixes come from one API call that takes SoundCloud two seconds or more, so GoLow shows the last copy at once and fetches a fresh one in the background for next time:
+
+| Signed in, Home page | Before | GoLow |
+|---|---|---|
+| Your mixes on screen | 3.9 to 4.5 s | 1.7 to 1.8 s |
+| Largest paint finished | 4.2 to 4.8 s | 2.0 to 2.1 s |
+| Opening with "Start with Windows" on | same as above | 0.02 s |
+
+Most of the idle gap is one fix. Each playlist tile on SoundCloud hides a buffering icon that spins forever, and Chromium redoes the page layout for it on every display refresh, so faster screens pay more. GoLow stops rendering that icon only while SoundCloud itself keeps it hidden. Minimized, both builds idle near 1% of one core.
 
 ## What it does
 
@@ -43,6 +51,8 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 **Now playing.** A full-window view shows the artwork large, with lyrics or the mix tracklist beside it. A small badge shows which encoding SoundCloud is actually streaming, such as AAC 256. Share links copy without SoundCloud's tracking codes.
 
+**Fast to open.** Instant Home shows your last Home mixes straight away while fresh ones load in the background; it is used only for the account that fetched it and only when it is under a day old. GoLow connects to SoundCloud's servers while its code is still loading, and keeps tracking and marketing scripts from competing with it at startup. Start with Windows, ready in the tray, loads GoLow hidden when you sign in, so opening it is instant; Keep running in the tray does the same after you close the window. Both are off until you switch them on.
+
 **When things go wrong.** When SoundCloud's servers fail, GoLow says so instead of leaving you to blame your connection. A page that never draws reloads once, and a crashed track page recovers by itself. A comment posts once however often Enter is pressed while SoundCloud is slow. Tracks not available in your country are skipped rather than stalling the queue, and messages from accounts you don't follow that read like promotion or scam templates are flagged.
 
 **Your library.**
@@ -65,7 +75,7 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 **Settings** live behind the sliders icon in SoundCloud's header, next to the ⋯ menu, or `Ctrl+,`, grouped into Interface, Playback, Mixes and podcasts, Lists and feed, Sharing and App. Sharing holds Discord status, which shows what you are listening to on your Discord profile, and Scrobble to Last.fm, which signs in through your browser the first time; both are off until you switch them on. The GoLow panel, from the list icon in the player bar or `Ctrl+.`, holds Now (tracklist and bookmarks), Lyrics, Continue, Library, Stats, Radar, Following and the blocklist. Add `?noclean` to a SoundCloud URL to load one page without cleanup.
 
-**Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad and tracking bootstrap scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
+**Reduce background work** stops the hidden buffering icons from forcing a layout on every display refresh, skips a short, exact list of ad, tracking and Chromecast scripts and the hidden Artist Tools frame, and asks WebView2 for a low memory target while minimized. Audio, CDN, consent, OAuth and security requests are never filtered. This is not a general tracker blocker.
 
 GoLow allows top-level navigation and sign-in popups only to SoundCloud and its exact login providers (Google, Apple, Facebook, Microsoft, GitHub). SoundCloud requires signing in before anything plays.
 

@@ -133,6 +133,10 @@ def run(exe, profile, settings, args, port):
         result["startup_s"] = {k: float(v) for v, k in re.findall(r"^t=([\d.]+)s (\w+)", log, re.M)[::-1]}
         cdp = Cdp(port) if args.cdp else None
         time.sleep(args.settle)
+        # Page milestones (first paint, content) arrive after the load; read them now too.
+        late = (profile / "startup.log").read_text(errors="replace")
+        for k, v in {k: float(v) for v, k in re.findall(r"^t=([\d.]+)s (\w+)", late, re.M)[::-1]}.items():
+            result["startup_s"].setdefault(k, v)
         result["visible"] = sample(root, args.sample, cdp)
         user32.ShowWindow(main_window(child.pid), 6)  # SW_MINIMIZE
         time.sleep(args.settle)

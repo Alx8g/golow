@@ -26,6 +26,19 @@ const RULES: &[(&str, &str, bool)] = &[
     ("c.amazon-adsystem.com", "/aax2/apstag.js", false),
     ("connect.facebook.net", "/en_US/fbevents.js", false),
     ("analytics.tiktok.com", "/i18n/pixel/events.js", false),
+    // Measurement and marketing scripts that run while SoundCloud's app is starting.
+    ("www.googletagmanager.com", "/gtm.js", false),
+    ("www.googletagmanager.com", "/gtag/js", false),
+    ("www.google-analytics.com", "/analytics.js", false),
+    ("secure.quantserve.com", "/quant.js", false),
+    ("rules.quantcount.com", "/rules-p-47_zcqmJsLHXQ.js", false),
+    ("sb.scorecardresearch.com", "/cs/16601931/beacon.js", false),
+    ("cdn.moengage.com", "/webpush/moe_webSdk.min.latest.js", false),
+    ("websdk.appsflyersdk.com", "/", false),
+    // The Chromecast SDK: WebView2 has no Cast support, so it can only cost startup time.
+    ("www.gstatic.com", "/cv/js/sender/v1/cast_sender.js", false),
+    ("www.gstatic.com", "/cast/sdk/libs/sender/1.0/cast_framework.js", false),
+    ("www.gstatic.com", "/eureka/clank/154/cast_sender.js", false),
 ];
 
 /// The two settings the filter follows; copied so request callbacks never borrow settings.
