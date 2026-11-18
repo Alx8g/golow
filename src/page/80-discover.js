@@ -120,15 +120,17 @@ tabs.push({id: 'lyrics', label: 'Lyrics', order: 2, render(body) {
 }});
 on('track', () => { if (panelOpen('lyrics')) refreshPanel('lyrics'); });
 on('tick', () => {
-  if (!panelOpen('lyrics') || lyrics.path !== player.path || !lyrics.lines.length) return;
+  if (!overlayRoot.querySelector('.lyrics') || lyrics.path !== player.path || !lyrics.lines.length) return;
   const t = position() + 0.3;
   let index = -1;
   for (let i = lyrics.lines.length - 1; i >= 0; i--) if (lyrics.lines[i].t <= t) { index = i; break; }
   if (index === lyricLine) return;
   lyricLine = index;
-  const body = overlayRoot.getElementById('body');
-  body.querySelector('li.current')?.classList.remove('current');
-  const line = body.querySelector(`li[data-line="${index}"]`);
-  line?.classList.add('current');
-  line?.scrollIntoView({block: 'center', behavior: 'smooth'});
+  // The panel and the full-window view can both show the lyrics.
+  for (const list of overlayRoot.querySelectorAll('.lyrics')) {
+    list.querySelector('li.current')?.classList.remove('current');
+    const line = list.querySelector(`li[data-line="${index}"]`);
+    line?.classList.add('current');
+    line?.scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
 });

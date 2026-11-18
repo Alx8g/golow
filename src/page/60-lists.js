@@ -110,9 +110,11 @@ on('apply', feedSwitches);
 // --- Skipping what you never want to hear ---
 function unwanted(path) {
   const track = tracks.get(path);
-  if (isBlocked(path, track?.user || player.artistPath)) return 'blocked';
-  if (pref('skip_previews') && track?.policy === 'SNIP') return 'preview';
-  if (pref('skip_ai') && aiLike(track)) return 'AI-tagged';
+  if (isBlocked(path, track?.user || player.artistPath)) return 'a blocked track';
+  // Region-blocked tracks cannot play here; SoundCloud would stall on them.
+  if (track?.policy === 'BLOCK') return 'a track not available here';
+  if (pref('skip_previews') && track?.policy === 'SNIP') return 'a 30-second preview';
+  if (pref('skip_ai') && aiLike(track)) return 'a track tagged as AI';
   return null;
 }
 on('track', path => {
@@ -121,7 +123,7 @@ on('track', path => {
   const reason = unwanted(path);
   if (!reason) return;
   advance();
-  toast(`Skipped a ${reason} track: ${player.title}`);
+  toast(`Skipped ${reason}: ${player.title}`);
 });
 const advance = () => (managed ? play(pos + 1) : commands.next());
 barButtons.push({name: 'block', icon: 'block', label: 'Never play…', narrow: true, onclick: event => {

@@ -41,8 +41,10 @@ export async function withEdge({routes, api = {}}, run) {
     ws.onmessage = ({data}) => {
       const message = JSON.parse(data);
       if (message.method === 'Fetch.requestPaused') {
-        const body = JSON.stringify(Object.entries(api).find(([key]) => message.params.request.url.includes(key))?.[1] || {});
-        ws.send(JSON.stringify({id: ++id, method: 'Fetch.fulfillRequest', params: {requestId: message.params.requestId, responseCode: 200,
+        // An answer of {__status: 503} fakes a failing endpoint.
+        const answer = Object.entries(api).find(([key]) => message.params.request.url.includes(key))?.[1] || {};
+        const body = JSON.stringify(answer.__status ? {} : answer);
+        ws.send(JSON.stringify({id: ++id, method: 'Fetch.fulfillRequest', params: {requestId: message.params.requestId, responseCode: answer.__status || 200,
           responseHeaders: [{name: 'Content-Type', value: 'application/json'}, {name: 'Access-Control-Allow-Origin', value: '*'}],
           body: Buffer.from(body).toString('base64')}}));
       }

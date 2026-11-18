@@ -18,7 +18,7 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 
 ## What it does
 
-**Less clutter.** Upsells and creator tools are gone: Try Artist Pro, Artist Studio, Upload, artist follow suggestions, app-store badges, footer links and banners that sell a plan. Liked tracks show an orange heart everywhere, including SoundCloud's redesigned track pages, and their waveforms render at full contrast. Pages use up to 1840 px on wide monitors, and below 1000 px the sidebar drops so narrow windows never scroll sideways.
+**Less clutter.** Upsells and creator tools are gone: Try Artist Pro, Artist Studio, Upload, artist follow suggestions, app-store badges, footer links and banners that sell a plan. Liked tracks show an orange heart everywhere, including SoundCloud's redesigned track pages, and their waveforms render at full contrast. Pages use up to 1840 px on wide monitors, and below 1000 px the sidebar drops so narrow windows never scroll sideways. SoundCloud's dark mode can go pure black or midnight blue, and your own CSS applies on top.
 
 **Mixes and podcasts.**
 - The GoLow panel shows a mix's tracklist, read from its description, with times you can click and the current track marked. Find IDs in comments collects the tracklists and track names people post in the comments.
@@ -40,6 +40,10 @@ Most of the gap is one fix. Each playlist tile on SoundCloud hides a buffering i
 - The mouse wheel over the speaker icon changes volume. Keyboard media keys and the Windows media overlay work as usual.
 
 **The window.** The title shows the playing track, so the taskbar does too, and the taskbar thumbnail has previous, play and next buttons. Links to other sites, such as an artist's website, open in your browser. `Ctrl` with the mouse wheel zooms and the zoom is remembered; the mouse's back and forward buttons work as in a browser. You can choose the start page, including the page you had open last. Closing the window while music plays keeps it playing from a tray icon; closing while paused quits. Launching GoLow again brings the window back. The mini player shrinks the window to SoundCloud's control bar, and pairs well with Keep on top.
+
+**Now playing.** A full-window view shows the artwork large, with lyrics or the mix tracklist beside it. A small badge shows which encoding SoundCloud is actually streaming, such as AAC 256. Share links copy without SoundCloud's tracking codes.
+
+**When things go wrong.** When SoundCloud's servers fail, GoLow says so instead of leaving you to blame your connection. A page that never draws reloads once, and a crashed track page recovers by itself. A comment posts once however often Enter is pressed while SoundCloud is slow. Tracks not available in your country are skipped rather than stalling the queue, and messages from accounts you don't follow that read like promotion or scam templates are flagged.
 
 **Your library.**
 - A weekly backup of every like and playlist track lives in GoLow's folder, outside the browser profile. When tracks vanish, the Library tab lists them, split into tracks gone from SoundCloud and tracks no longer in your likes or playlists, with what each was called. Likes export to a spreadsheet.
