@@ -19,6 +19,8 @@ pub struct Settings {
     pub top_comments: bool,
     /// "Listening to" status in Discord. Opt-in: it shares what is playing.
     pub discord: bool,
+    /// Scrobbling to Last.fm, when built with a Last.fm API key.
+    pub lastfm: bool,
 }
 
 impl Default for Settings {
@@ -34,6 +36,7 @@ impl Default for Settings {
             played: true,
             top_comments: false,
             discord: false,
+            lastfm: false,
         }
     }
 }
@@ -64,10 +67,13 @@ pub enum Message {
     Now(NowPlaying),
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
 pub struct NowPlaying {
     pub now: Option<String>,
+    pub artist: String,
+    pub title: String,
+    pub seconds: u32,
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
@@ -100,9 +106,15 @@ mod tests {
         let parse = |json| serde_json::from_str::<Message>(json).ok();
         let mini = Settings { compact: true, ..Settings::default() };
         assert_eq!(parse(r#"{"compact":true}"#), Some(Message::Settings(mini)));
-        let playing = NowPlaying { now: Some("Track - Artist".into()) };
-        assert_eq!(parse(r#"{"now":"Track - Artist"}"#), Some(Message::Now(playing)));
-        assert_eq!(parse(r#"{"now":null}"#), Some(Message::Now(NowPlaying { now: None })));
+        let playing = NowPlaying {
+            now: Some("Track - Artist".into()),
+            artist: "Artist".into(),
+            title: "Track".into(),
+            seconds: 200,
+        };
+        let json = r#"{"now":"Track - Artist","artist":"Artist","title":"Track","seconds":200}"#;
+        assert_eq!(parse(json), Some(Message::Now(playing)));
+        assert_eq!(parse(r#"{"now":null}"#), Some(Message::Now(NowPlaying::default())));
         assert_eq!(parse(r#"{"command":"delete"}"#), None);
     }
 
