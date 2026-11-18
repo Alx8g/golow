@@ -199,6 +199,7 @@ const FADE = 20000;
 let sleep = null;
 function setSleep(minutes) {
   clearTimeout(sleep?.timer);
+  if (sleep?.fading && sleep.el && Math.abs(sleep.el.volume - sleep.volume) <= 0.02) sleep.el.volume = sleep.base;
   const ms = minutes * 60000, fade = Math.min(FADE, ms);
   sleep = !minutes ? null : minutes < 0 ? {end: true, fade: FADE} : {at: Date.now() + ms, fade, timer: setTimeout(fadeOut, ms - fade)};
   sleepLabel();
@@ -212,16 +213,19 @@ function sleepLabel() {
 }
 async function fadeOut() {
   if (!sleep || sleep.fading) return;
-  sleep.fading = true;
-  const el = media.el, base = el?.volume ?? 1, steps = 50, fade = sleep.fade;
-  for (let i = 1; el && i <= steps && sleep?.fading; i++) {
+  const timer = sleep;
+  timer.fading = true;
+  const el = timer.el = media.el, base = timer.base = el?.volume ?? 1, steps = 50, fade = timer.fade;
+  for (let i = 1; el && i <= steps && sleep === timer; i++) {
     // The user moved the volume themselves: stop fading and leave it there.
     if (i > 1 && Math.abs(el.volume - base * (1 - (i - 1) / steps)) > 0.02) { sleep = null; return sleepLabel(); }
-    el.volume = base * (1 - i / steps);
+    timer.volume = el.volume = base * (1 - i / steps);
     await wait(fade / steps);
   }
+  if (sleep !== timer) return;
   if (player.playing) commands.toggle();
   await wait(300);
+  if (sleep !== timer) return;
   if (el) el.volume = base;
   sleep = null;
   sleepLabel();
