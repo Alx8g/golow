@@ -85,7 +85,12 @@ const INSTANT = '/mixed-selections', DAY_MS = 86400000;
 const fromCache = new WeakSet(), refreshes = new WeakSet();
 const instant = {cache: null, served: false, savedAt: 0};
 instant.ready = pref('instant_home') && window.ipc
-  ? call('load', {name: 'instant-home'}, 3000).then(text => { instant.cache = JSON.parse(text || 'null'); }, () => {})
+  ? call('load', {name: 'instant-home'}, 3000).then(text => {
+    const cache = JSON.parse(text || 'null');
+    if (!cache || !Number.isFinite(cache.at) || typeof cache.auth !== 'string' || typeof cache.body !== 'string') return;
+    JSON.parse(cache.body);
+    instant.cache = cache;
+  }).catch(() => {})
   : Promise.resolve();
 // A fingerprint of the session's sign-in, so one account's Home never shows for another.
 const fingerprint = text => { let hash = 0x811c9dc5; for (const c of String(text)) hash = Math.imul(hash ^ c.charCodeAt(0), 0x01000193) >>> 0; return hash.toString(16); };

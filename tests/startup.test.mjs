@@ -52,5 +52,14 @@ test('Instant Home hands over the last answer and refreshes it', {skip: !edge &&
     await navigate('/discover');
     await evaluate('window.__home');
     assert.equal(await evaluate(homeRequests), 1, 'another account goes to the network');
+
+    for (const cached of ['{broken', 'null', JSON.stringify({at: Date.now(), auth: 'any', body: '{broken'})]) {
+      await evaluate(`sessionStorage.setItem('files', JSON.stringify({'instant-home': ${JSON.stringify(cached)}}))`);
+      await navigate('/discover');
+      const response = await evaluate('window.__home');
+      assert.equal(response.status, 200, 'invalid cache falls back successfully');
+      assert.match(response.body, /Mixed for you/);
+      assert.equal(await evaluate(homeRequests), 1, 'invalid cache sends a network request');
+    }
   });
 });
