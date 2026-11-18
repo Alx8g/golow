@@ -51,6 +51,7 @@ on('frame', doc => {
     const input = doc.querySelector('input[aria-label="Add a comment to this track"], textarea[aria-label="Add a comment to this track"]');
     const isSubmit = event.type === 'submit' ? event.target.contains(input) : event.target.closest?.('button[aria-label="Post comment"]');
     if (!input || !isSubmit) return;
+    if (event.type === 'click' && isSubmit.type === 'submit' && isSubmit.form?.contains(input)) return;
     const text = input.value.trim(), last = posted.get(doc);
     if (text && text === last.text && Date.now() - last.at < 15000) {
       event.preventDefault();
