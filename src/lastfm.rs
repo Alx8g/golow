@@ -8,13 +8,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use windows::{
-    core::{w, PCWSTR},
-    Win32::{
-        Networking::WinHttp::*,
-        Security::Cryptography::{BCryptHash, BCRYPT_MD5_ALG_HANDLE},
-    },
-};
+use windows::Win32::Security::Cryptography::{BCryptHash, BCRYPT_MD5_ALG_HANDLE};
 
 pub const KEY: Option<&str> = option_env!("GOLOW_LASTFM_KEY");
 const SECRET: &str = match option_env!("GOLOW_LASTFM_SECRET") {
@@ -69,52 +63,10 @@ fn signed(params: &[(&str, &str)], key: &str) -> String {
 }
 
 fn post(body: &str) -> Option<Value> {
-    unsafe {
-        let session = WinHttpOpen(
-            w!("GoLow"),
-            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-            PCWSTR::null(),
-            PCWSTR::null(),
-            0,
-        );
-        let connection =
-            WinHttpConnect(session, w!("ws.audioscrobbler.com"), INTERNET_DEFAULT_HTTPS_PORT, 0);
-        let request = WinHttpOpenRequest(
-            connection,
-            w!("POST"),
-            w!("/2.0/"),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            std::ptr::null(),
-            WINHTTP_FLAG_SECURE,
-        );
-        let headers: Vec<u16> =
-            "Content-Type: application/x-www-form-urlencoded".encode_utf16().collect();
-        let mut response = Vec::new();
-        let sent = WinHttpSendRequest(
-            request,
-            Some(&headers),
-            Some(body.as_ptr().cast()),
-            body.len() as u32,
-            body.len() as u32,
-            0,
-        )
-        .is_ok()
-            && WinHttpReceiveResponse(request, std::ptr::null_mut()).is_ok();
-        let mut chunk = [0u8; 8192];
-        let mut read = 0;
-        while sent
-            && WinHttpReadData(request, chunk.as_mut_ptr().cast(), chunk.len() as u32, &mut read)
-                .is_ok()
-            && read > 0
-        {
-            response.extend_from_slice(&chunk[..read as usize]);
-        }
-        for handle in [request, connection, session] {
-            let _ = WinHttpCloseHandle(handle);
-        }
-        serde_json::from_slice(&response).ok()
-    }
+    let url = url::Url::parse("https://ws.audioscrobbler.com/2.0/").ok()?;
+    let headers = "Content-Type: application/x-www-form-urlencoded";
+    let response = crate::http::request("POST", &url, headers, body.as_bytes(), 1024 * 1024)?;
+    serde_json::from_slice(&response.body).ok()
 }
 
 fn call(key: &str, method: &str, params: &[(&str, &str)]) -> Option<Value> {

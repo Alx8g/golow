@@ -109,6 +109,13 @@ pub struct WindowState {
     /// The SoundCloud path open at exit, for the "last page" start page.
     #[serde(default)]
     pub last: String,
+    /// Page zoom, 1.0 for 100%.
+    #[serde(default = "full_size")]
+    pub zoom: f64,
+}
+
+fn full_size() -> f64 {
+    1.0
 }
 
 impl WindowState {
@@ -216,7 +223,10 @@ mod tests {
 
     #[test]
     fn minimized_zero_size_is_not_saved() {
-        assert!(!WindowState { x: 0, y: 0, w: 0, h: 0, last: String::new() }.valid());
-        assert!(WindowState { x: -100, y: 0, w: 1280, h: 800, last: String::new() }.valid());
+        let state = |w, h| WindowState { x: -100, y: 0, w, h, last: String::new(), zoom: 1.0 };
+        assert!(!state(0, 0).valid());
+        assert!(state(1280, 800).valid());
+        let old: WindowState = serde_json::from_str(r#"{"x":1,"y":2,"w":1280,"h":800}"#).unwrap();
+        assert_eq!(old.zoom, 1.0);
     }
 }

@@ -1,13 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod calls;
 mod discord;
 mod filter;
+mod hotkeys;
+mod http;
 mod instance;
 mod lastfm;
+mod native;
+mod notify;
 mod policy;
+mod remote;
 mod settings;
 mod shell;
+mod store;
+mod taskbar;
+mod update;
 
+use calls::{Answer, Services};
 use serde_json::{json, Value};
 use settings::{
     read_json, write_json, Call, Message, NowPlaying, Settings, StartPage, WindowState,
@@ -18,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Mutex,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tao::{
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
@@ -44,8 +54,15 @@ enum Action {
     Settings(Settings),
     Now(NowPlaying),
     Call(Call),
-    /// A page command from the tray, hotkeys or the remote: `window.__scClient.command`.
+    /// Settles a page request answered on a worker thread.
+    Reply(u32, Result<Value, String>),
+    /// A page command from the tray, hotkeys, taskbar or the remote: `window.__scClient.command`.
     Command(&'static str, Value),
+    Hotkey(usize),
+    TaskbarReady,
+    Zoom(f64),
+    Update(update::Release),
+    Installed(PathBuf),
     PageLoaded,
     ClosePopup(WindowId),
     Show,
@@ -58,7 +75,41 @@ struct Popup {
     window: Window,
 }
 
-fn app_dir() -> PathBuf {
+/// `--profile NAME` runs a separate SoundCloud account; `--after PID` waits for a closing copy.
+struct Args {
+    profile: String,
+    after: Option<u32>,
+}
+
+fn args() -> Args {
+    let (mut profile, mut after, mut args) = (String::new(), None, std::env::args().skip(1));
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--profile" => {
+                profile = args.next().filter(|name| calls::valid_profile(name)).unwrap_or_default()
+            }
+            "--after" => after = args.next().and_then(|pid| pid.parse().ok()),
+            _ => {}
+        }
+    }
+    Args { profile, after }
+}
+
+fn wait_for(pid: u32) {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if !handle.is_null() {
+            WaitForSingleObject(handle, 10_000);
+            CloseHandle(handle);
+        }
+    }
+}
+
+fn base_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("GOLOW_PROFILE_DIR") {
         return dir.into();
     }
@@ -153,23 +204,54 @@ fn reply(view: &WebView, id: u32, result: Result<Value, String>) {
     let _ = view.evaluate_script(&format!("window.__scClient?.reply({id},{value},{error});"));
 }
 
-/// Requests from the page that need the app. Each validates its own arguments.
-fn answer(call: &Call) -> Result<Value, String> {
-    match call.call.as_str() {
-        "open" => {
-            let url = call.args["url"]
-                .as_str()
-                .and_then(policy::external)
-                .ok_or("not an external https link")?;
-            Ok(json!(shell::open_url(&url)))
-        }
-        other => Err(format!("unknown request {other}")),
+/// Tells the page something happened in the app: `window.__scClient.event(name, data)`.
+fn notice(view: &WebView, name: &str, data: &Value) {
+    let _ = view.evaluate_script(&format!("window.__scClient?.event({},{data});", json!(name)));
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// At most one GitHub check a day, recorded in update.json.
+fn check_updates(dir: &Path, proxy: EventLoopProxy<Action>) {
+    let file = dir.join("update.json");
+    let checked = read_json::<Value>(&file).and_then(|v| v["checked"].as_u64()).unwrap_or(0);
+    if unix_now().saturating_sub(checked) < 20 * 3600 {
+        return;
     }
+    std::thread::spawn(move || {
+        let _ = write_json(&file, &json!({"checked": unix_now()}));
+        if let Some(release) = update::check() {
+            let _ = proxy.send_event(Action::Update(release));
+        }
+    });
+}
+
+/// The page script and what it needs to know about this build.
+fn init_script(prefs: &Settings, profile: &str) -> Result<String, serde_json::Error> {
+    let app = json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "profile": profile,
+        "lastfm": lastfm::KEY.is_some(),
+        "hotkeys": hotkeys::ACTIONS.iter().map(|(action, keys)| (action.to_string(), json!(keys))).collect::<serde_json::Map<_, _>>(),
+    });
+    Ok(format!(
+        "window.__scInitialSettings={};window.__scLastfm={};window.__scApp={app};\n{}",
+        serde_json::to_string(prefs)?,
+        lastfm::KEY.is_some(),
+        include_str!(concat!(env!("OUT_DIR"), "/client.js"))
+    ))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
-    let dir = app_dir();
+    let Args { profile, after } = args();
+    if let Some(pid) = after {
+        wait_for(pid);
+    }
+    let base = base_dir();
+    let dir = if profile.is_empty() { base.clone() } else { base.join("profiles").join(&profile) };
     std::fs::create_dir_all(&dir)?;
     let Some(instance) = instance::Instance::acquire(&dir)? else {
         return Ok(());
@@ -217,8 +299,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = menu_proxy.lock().unwrap().send_event(action);
     }));
 
+    let title =
+        if profile.is_empty() { APP_NAME.to_owned() } else { format!("{APP_NAME} ({profile})") };
     let mut builder = WindowBuilder::new()
-        .with_title(APP_NAME)
+        .with_title(&title)
         .with_inner_size(LogicalSize::new(1280.0, 800.0))
         .with_min_inner_size(LogicalSize::new(360.0, 400.0));
     let saved = read_json::<WindowState>(&dir.join("window.json")).filter(WindowState::valid);
@@ -249,24 +333,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         w: normal_size.width,
         h: normal_size.height,
         last: String::new(),
+        zoom: saved.as_ref().map_or(1.0, |state| state.zoom),
     };
     apply_window(&window, &prefs, &Settings { compact: false, ..prefs.clone() }, &mut normal_size);
 
-    let mut context = WebContext::new(Some(dir.join("webview")));
-    let script = format!(
-        "window.__scInitialSettings={};window.__scLastfm={};\n{}",
-        serde_json::to_string(&prefs)?,
-        lastfm::KEY.is_some(),
-        include_str!(concat!(env!("OUT_DIR"), "/client.js"))
+    // Hotkeys, taskbar buttons and the taskbar-ready notice arrive as window messages.
+    let native_proxy = proxy.clone();
+    native::subclass(window.hwnd(), move |message| {
+        let _ = native_proxy.send_event(match message {
+            native::Native::Hotkey(id) => Action::Hotkey(id),
+            native::Native::Thumb(taskbar::PREVIOUS) => Action::Command("previous", Value::Null),
+            native::Native::Thumb(taskbar::NEXT) => Action::Command("next", Value::Null),
+            native::Native::Thumb(_) => Action::PlayPause,
+            native::Native::TaskbarReady => Action::TaskbarReady,
+        });
+    });
+    let mut hotkeys = hotkeys::Hotkeys::new(window.hwnd());
+    let mut hotkey_status = json!(hotkeys.apply(prefs.hotkeys, &prefs.shortcuts));
+    // Fails until Windows announces the taskbar button; TaskbarReady retries then.
+    let mut thumbs = taskbar::Taskbar::add(window.hwnd(), false).ok();
+    log(
+        &dir,
+        started,
+        if thumbs.is_some() { "taskbar_buttons" } else { "taskbar_buttons_pending" },
     );
+
+    let mut context = WebContext::new(Some(dir.join("webview")));
+    let script = init_script(&prefs, &profile)?;
     let discord = discord::start(discord::APP_ID);
     let lastfm = lastfm::KEY.map(|key| lastfm::start(key, dir.clone()));
     if prefs.lastfm {
         scrobble(&lastfm, lastfm::Event::Connect);
     }
+    let mut services = Services::new(base.clone(), dir.clone(), profile.clone(), proxy.clone());
+    services.set_remote(prefs.remote);
+    if prefs.updates {
+        check_updates(&dir, proxy.clone());
+    }
     let popups: Rc<RefCell<Vec<Popup>>> = Rc::default();
-    let (popup_store, ipc_proxy, load_proxy, log_dir) =
-        (popups.clone(), proxy.clone(), proxy.clone(), dir.clone());
+    let (popup_store, popup_proxy, ipc_proxy, load_proxy, log_dir) =
+        (popups.clone(), proxy.clone(), proxy.clone(), proxy.clone(), dir.clone());
     // Links the page opens in a new window go to the browser, at most one a second.
     let last_external = Cell::new(Instant::now() - Duration::from_secs(5));
     // Hardware acceleration off is for machines where the GPU path misbehaves.
@@ -275,6 +381,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_initialization_script(&script)
         .with_background_color((11, 11, 12, 255))
         .with_devtools(cfg!(debug_assertions))
+        // Ctrl+wheel, Ctrl+plus, Ctrl+minus and Ctrl+0 zoom the page.
+        .with_hotkeys_zoom(true)
         // Explicit arguments avoid Wry's default SmartScreen-disabling flag.
         // Standard Chromium background throttling stays enabled.
         .with_additional_browser_args(browser_args)
@@ -282,7 +390,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_ipc_handler(move |request| {
             // Requests can carry data such as a library backup; settings and now-playing are small.
             let body = request.body();
-            if body.len() > 32 * 1024 * 1024 || !policy::soundcloud_page(&request.uri().to_string())
+            if body.len() > store::LIMIT + 4096
+                || !policy::soundcloud_page(&request.uri().to_string())
             {
                 return;
             }
@@ -313,7 +422,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             else {
                 return NewWindowResponse::Deny;
             };
-            let (id, close_proxy) = (window.id(), proxy.clone());
+            let (id, close_proxy) = (window.id(), popup_proxy.clone());
             let Ok(view) = WebViewBuilder::new()
                 .with_environment(features.opener.environment)
                 .with_additional_browser_args("")
@@ -351,6 +460,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(error) = filter::install(&view, filter_prefs.clone()) {
         log(&dir, started, &format!("optional_resource_filter_unavailable {error}"));
     }
+    // Zoom stays where the user left it.
+    if (0.25..=5.0).contains(&win_state.zoom) && win_state.zoom != 1.0 {
+        let _ = view.zoom(win_state.zoom);
+    }
+    let zoom_proxy = proxy.clone();
+    let on_zoom =
+        webview2_com::ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+            if let Some(controller) = controller {
+                let mut factor = 1.0;
+                unsafe { controller.ZoomFactor(&mut factor)? };
+                let _ = zoom_proxy.send_event(Action::Zoom(factor));
+            }
+            Ok(())
+        }));
+    let mut token = 0;
+    // Raised for the user's own zooming; zoom the app sets is saved where it is set.
+    let _ = unsafe { view.controller().add_ZoomFactorChanged(&on_zoom, &mut token) };
     // The chosen start page, or the page open at the last exit.
     let last = saved.map(|state| state.last).filter(|path| {
         path.starts_with('/') && policy::soundcloud_page(&format!("https://soundcloud.com{path}"))
@@ -384,14 +510,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                     );
                 }
+                if prefs.now_file {
+                    // For stream overlays: "Artist - Title" while playing, empty when paused.
+                    let line = match (&now.now, now.artist.is_empty() || now.title.is_empty()) {
+                        (None, _) => String::new(),
+                        (Some(text), true) => text.clone(),
+                        (Some(_), false) => format!("{} - {}", now.artist, now.title),
+                    };
+                    let _ = std::fs::write(dir.join("now-playing.txt"), line);
+                }
                 now_playing = now.now.map(|title| title.chars().take(200).collect());
                 if prefs.discord {
                     let _ = discord.send(now_playing.clone());
                 }
-                let title = now_playing.as_ref().map(|now| format!("{now} · {APP_NAME}"));
-                window.set_title(title.as_deref().unwrap_or(APP_NAME));
+                if let Some(thumbs) = &mut thumbs {
+                    thumbs.set_playing(now_playing.is_some());
+                }
+                let full = now_playing.as_ref().map(|now| format!("{now} · {title}"));
+                window.set_title(full.as_deref().unwrap_or(&title));
                 if let Some(tray) = &tray_icon {
-                    let _ = tray.set_tooltip(title.as_deref());
+                    let _ = tray.set_tooltip(full.as_deref());
                 }
             }
             Event::UserEvent(Action::Show) => {
@@ -410,7 +548,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let script = format!("window.__scClient?.command({},{arg});", json!(name));
                 let _ = view.evaluate_script(&script);
             }
-            Event::UserEvent(Action::Call(call)) => reply(&view, call.id, answer(&call)),
+            Event::UserEvent(Action::Hotkey(id)) => match hotkeys::Hotkeys::action(id) {
+                Some("show") => {
+                    let _ = proxy.send_event(Action::Show);
+                }
+                Some(name) => {
+                    let _ = view
+                        .evaluate_script(&format!("window.__scClient?.command({});", json!(name)));
+                }
+                None => {}
+            },
+            Event::UserEvent(Action::TaskbarReady) => {
+                thumbs = taskbar::Taskbar::add(window.hwnd(), now_playing.is_some()).ok();
+                log(
+                    &dir,
+                    started,
+                    if thumbs.is_some() { "taskbar_buttons" } else { "taskbar_buttons_failed" },
+                );
+            }
+            Event::UserEvent(Action::Zoom(factor)) if (0.25..=5.0).contains(&factor) => {
+                win_state.zoom = factor;
+                save_at = Some(Instant::now() + SAVE_DELAY);
+            }
+            Event::UserEvent(Action::Call(call)) => match call.call.as_str() {
+                "zoom" => {
+                    let factor = call.args["factor"].as_f64().unwrap_or(1.0).clamp(0.25, 5.0);
+                    let result =
+                        view.zoom(factor).map(|()| json!(factor)).map_err(|e| e.to_string());
+                    // Only the user's own zooming raises ZoomFactorChanged, so save this one here.
+                    if result.is_ok() {
+                        win_state.zoom = factor;
+                        save_at = Some(Instant::now() + SAVE_DELAY);
+                    }
+                    reply(&view, call.id, result);
+                }
+                "hotkeys" => reply(&view, call.id, Ok(hotkey_status.clone())),
+                _ => {
+                    if let Answer::Now(result) = services.answer(&call) {
+                        reply(&view, call.id, result);
+                    }
+                }
+            },
+            Event::UserEvent(Action::Reply(id, result)) => reply(&view, id, result),
+            Event::UserEvent(Action::Update(release)) => {
+                notice(&view, "update", &json!({"version": release.version, "page": release.page}));
+                services.release = Some(release);
+            }
+            Event::UserEvent(Action::Installed(exe)) => {
+                services.installed = Some(exe);
+                notice(&view, "installed", &Value::Null);
+            }
             Event::UserEvent(Action::Quit) => exit = true,
             Event::UserEvent(Action::ClosePopup(id)) => {
                 popups.borrow_mut().retain(|p| p.window.id() != id)
@@ -418,6 +605,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::UserEvent(Action::PageLoaded) => {
                 if let Ok(json) = serde_json::to_string(&prefs) {
                     let _ = view.evaluate_script(&format!("window.__scClient?.update({json});"));
+                }
+                notice(&view, "hotkeys", &hotkey_status);
+                if let Some(release) = &services.release {
+                    notice(
+                        &view,
+                        "update",
+                        &json!({"version": release.version, "page": release.page}),
+                    );
                 }
                 set_background(&view, minimized, prefs.efficiency);
             }
@@ -431,6 +626,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if next.discord != prefs.discord {
                     let _ = discord.send(now_playing.clone().filter(|_| next.discord));
                 }
+                if next.hotkeys != prefs.hotkeys || next.shortcuts != prefs.shortcuts {
+                    hotkey_status = json!(hotkeys.apply(next.hotkeys, &next.shortcuts));
+                    notice(&view, "hotkeys", &hotkey_status);
+                }
+                if next.now_file != prefs.now_file && !next.now_file {
+                    let _ = std::fs::remove_file(dir.join("now-playing.txt"));
+                }
+                if next.updates && !prefs.updates {
+                    check_updates(&dir, proxy.clone());
+                }
+                services.set_remote(next.remote);
                 apply_window(&window, &next, &prefs, &mut normal_size);
                 prefs = next;
                 filter_prefs.set(rules(&prefs));
@@ -443,8 +649,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match event {
                     // Closing while music plays keeps it playing from the tray.
                     WindowEvent::CloseRequested if now_playing.is_some() => {
-                        let tooltip =
-                            format!("{} · {APP_NAME}", now_playing.as_deref().unwrap_or(""));
+                        let tooltip = format!("{} · {title}", now_playing.as_deref().unwrap_or(""));
                         if tray_icon.is_none() {
                             tray_icon = tray(icon, w, h, &tooltip);
                         }
@@ -499,6 +704,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|url| url::Url::parse(&url).ok())
                 .map(|url| url.path().chars().take(512).collect())
                 .unwrap_or_default();
+            if prefs.now_file {
+                let _ = std::fs::write(dir.join("now-playing.txt"), "");
+            }
         }
         if (exit || save_at.is_some_and(|at| Instant::now() >= at)) && win_state.valid() {
             save_at = None;

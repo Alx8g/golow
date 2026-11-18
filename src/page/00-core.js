@@ -23,7 +23,7 @@ const store = (key, value) => { try { localStorage.setItem('golow-' + key, JSON.
 
 // Feature hooks. A feature that throws (say, after a SoundCloud redesign) is logged and skipped,
 // so it never takes the others down with it.
-const hooks = {track: [], tick: [], page: [], apply: [], frame: [], data: [], health: [], key: []};
+const hooks = {track: [], tick: [], page: [], apply: [], frame: [], data: [], health: [], key: [], app: []};
 const on = (name, fn) => hooks[name].push(fn);
 function emit(name, ...args) {
   for (const fn of hooks[name]) {
