@@ -162,6 +162,15 @@ impl Play {
             && self.seconds > 30
             && self.heard() >= Duration::from_secs(u64::from(self.seconds / 2).min(240))
     }
+
+    fn submit(&mut self, send: impl FnOnce(&Self) -> Option<Value>) {
+        if self.due() {
+            self.scrobbled = send(self).is_some_and(|reply| {
+                let accepted = &reply["scrobbles"]["@attr"]["accepted"];
+                accepted == "1" || accepted.as_u64() == Some(1)
+            });
+        }
+    }
 }
 
 /// Scrobbles on a worker thread. The session key is kept in the profile directory.
@@ -172,23 +181,25 @@ pub fn start(key: &'static str, profile: PathBuf) -> Sender<Event> {
         let mut session: Option<String> = crate::settings::read_json::<Value>(&store)
             .and_then(|saved| saved["key"].as_str().map(String::from));
         let mut play: Option<Play> = None;
+        let mut pending = Vec::<Play>::new();
         loop {
             let event = events.recv_timeout(Duration::from_secs(10));
             let sk = session.clone().unwrap_or_default();
             let scrobble = |play: &mut Play| {
-                if play.due() && !sk.is_empty() {
-                    play.scrobbled = true;
-                    let at = play.started.to_string();
-                    call(
-                        key,
-                        "track.scrobble",
-                        &[
-                            ("artist", &play.artist),
-                            ("track", &play.title),
-                            ("timestamp", &at),
-                            ("sk", &sk),
-                        ],
-                    );
+                if !sk.is_empty() {
+                    play.submit(|play| {
+                        let at = play.started.to_string();
+                        call(
+                            key,
+                            "track.scrobble",
+                            &[
+                                ("artist", &play.artist),
+                                ("track", &play.title),
+                                ("timestamp", &at),
+                                ("sk", &sk),
+                            ],
+                        )
+                    });
                 }
             };
             match event {
@@ -197,8 +208,12 @@ pub fn start(key: &'static str, profile: PathBuf) -> Sender<Event> {
                         current.since.get_or_insert_with(Instant::now);
                     }
                     _ => {
-                        if let Some(previous) = &mut play {
-                            scrobble(previous);
+                        if let Some(mut previous) = play.take() {
+                            previous.listened = previous.heard();
+                            previous.since = None;
+                            if previous.due() {
+                                pending.push(previous);
+                            }
                         }
                         if !sk.is_empty() {
                             let length = seconds.to_string();
@@ -243,6 +258,9 @@ pub fn start(key: &'static str, profile: PathBuf) -> Sender<Event> {
                     if let Some(current) = &mut play {
                         scrobble(current);
                     }
+                    for previous in &mut pending {
+                        scrobble(previous);
+                    }
                     let _ = done.send(());
                     return;
                 }
@@ -253,6 +271,10 @@ pub fn start(key: &'static str, profile: PathBuf) -> Sender<Event> {
             if let Some(current) = &mut play {
                 scrobble(current);
             }
+            pending.retain_mut(|previous| {
+                scrobble(previous);
+                !previous.scrobbled
+            });
         }
     });
     sender
@@ -261,6 +283,46 @@ pub fn start(key: &'static str, profile: PathBuf) -> Sender<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_submissions_remain_eligible_until_accepted() {
+        let mut play = Play {
+            artist: String::new(),
+            title: String::new(),
+            seconds: 200,
+            started: 0,
+            listened: Duration::from_secs(100),
+            since: None,
+            scrobbled: false,
+        };
+        for response in [
+            None,
+            Some(json!({"error": 11})),
+            Some(json!({})),
+            Some(json!({"scrobbles": {"@attr": {"accepted": "0"}}})),
+        ] {
+            play.submit(|_| response);
+            assert!(play.due());
+        }
+        play.submit(|_| Some(json!({"scrobbles": {"@attr": {"accepted": "1"}}})));
+        assert!(play.scrobbled);
+        play.submit(|_| panic!("accepted plays must not submit twice"));
+    }
+
+    #[test]
+    fn ineligible_plays_do_not_submit() {
+        let mut play = Play {
+            artist: String::new(),
+            title: String::new(),
+            seconds: 200,
+            started: 0,
+            listened: Duration::ZERO,
+            since: None,
+            scrobbled: false,
+        };
+        play.submit(|_| panic!("not enough listening time"));
+        assert!(!play.scrobbled);
+    }
 
     #[test]
     fn titles_with_an_artist_prefix_are_split() {
