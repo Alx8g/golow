@@ -1,4 +1,4 @@
-use crate::{policy::trusted_https, settings::Settings};
+use crate::policy::trusted_https;
 use std::{cell::Cell, rc::Rc};
 use webview2_com::{
     take_pwstr,
@@ -28,7 +28,14 @@ const RULES: &[(&str, &str, bool)] = &[
     ("analytics.tiktok.com", "/i18n/pixel/events.js", false),
 ];
 
-pub fn blocked(raw: &str, document: bool, prefs: Settings) -> bool {
+/// The two settings the filter follows; copied so request callbacks never borrow settings.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rules {
+    pub cleanup: bool,
+    pub efficiency: bool,
+}
+
+pub fn blocked(raw: &str, document: bool, prefs: Rules) -> bool {
     let Some(url) = trusted_https(raw) else {
         return false;
     };
@@ -39,7 +46,7 @@ pub fn blocked(raw: &str, document: bool, prefs: Settings) -> bool {
     })
 }
 
-pub fn install(view: &WebView, prefs: Rc<Cell<Settings>>) -> windows::core::Result<()> {
+pub fn install(view: &WebView, prefs: Rc<Cell<Rules>>) -> windows::core::Result<()> {
     let native = view.webview();
     // This API includes iframe requests, unlike the deprecated two-argument filter.
     let modern: ICoreWebView2_22 = native.cast()?;
@@ -102,8 +109,8 @@ mod tests {
 
     #[test]
     fn blocks_only_exact_listed_resources_and_obeys_settings() {
-        let on = Settings::default();
-        let off = Settings { cleanup: false, efficiency: false, ..on };
+        let on = Rules { cleanup: true, efficiency: true };
+        let off = Rules { cleanup: false, efficiency: false };
         for &(host, path, promo) in RULES {
             let url = format!("https://{host}{path}?cache=1");
             assert!(blocked(&url, true, on) && !blocked(&url, true, off), "{url}");
@@ -127,7 +134,7 @@ mod tests {
             https://connect.facebook.net/en_US/sdk.js https://cdn.cookielaw.org/script.js
             https://cadmus.script.ac/d24657ks8lvxjy/script.js https://www.redditstatic.com/other.js";
         for url in urls.split_whitespace() {
-            assert!(!blocked(url, true, Settings::default()), "{url}");
+            assert!(!blocked(url, true, Rules { cleanup: true, efficiency: true }), "{url}");
         }
     }
 }

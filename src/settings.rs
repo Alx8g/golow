@@ -1,7 +1,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fs, io, path::Path};
+use std::{collections::BTreeMap, fs, io, path::Path};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub cleanup: bool,
@@ -21,6 +21,57 @@ pub struct Settings {
     pub discord: bool,
     /// Scrobbling to Last.fm, when built with a Last.fm API key.
     pub lastfm: bool,
+    /// System-wide shortcuts. Off by default: they take keys from every other app.
+    pub hotkeys: bool,
+    /// Action name to key combination, such as "Ctrl+Alt+Shift+P". Empty means the defaults.
+    pub shortcuts: BTreeMap<String, String>,
+    pub start_page: StartPage,
+    /// Hardware acceleration. A change takes effect on the next start.
+    pub gpu: bool,
+    /// Writes what is playing to now-playing.txt, for stream overlays.
+    pub now_file: bool,
+    /// The phone remote on the local network.
+    pub remote: bool,
+    /// Windows notifications for new releases from artists you follow.
+    pub notify: bool,
+    /// Checks GitHub for a newer GoLow once a day.
+    pub updates: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StartPage {
+    #[default]
+    Discover,
+    Feed,
+    Likes,
+    Library,
+    History,
+    /// The page that was open when GoLow last closed.
+    Last,
+}
+
+impl StartPage {
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Discover | Self::Last => "/discover",
+            Self::Feed => "/feed",
+            Self::Likes => "/you/likes",
+            Self::Library => "/you/library",
+            Self::History => "/you/history",
+        }
+    }
+}
+
+impl Settings {
+    /// Bounds what the page can store: a few short shortcut entries.
+    pub fn sanitized(mut self) -> Self {
+        self.shortcuts.retain(|action, keys| action.len() <= 32 && keys.len() <= 48);
+        while self.shortcuts.len() > 24 {
+            self.shortcuts.pop_last();
+        }
+        self
+    }
 }
 
 impl Default for Settings {
@@ -37,16 +88,27 @@ impl Default for Settings {
             top_comments: false,
             discord: false,
             lastfm: false,
+            hotkeys: false,
+            shortcuts: BTreeMap::new(),
+            start_page: StartPage::Discover,
+            gpu: true,
+            now_file: false,
+            remote: false,
+            notify: false,
+            updates: true,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     pub x: i32,
     pub y: i32,
     pub w: u32,
     pub h: u32,
+    /// The SoundCloud path open at exit, for the "last page" start page.
+    #[serde(default)]
+    pub last: String,
 }
 
 impl WindowState {
@@ -59,12 +121,14 @@ impl WindowState {
     }
 }
 
-/// Messages from the page: new settings, or what is playing (`None` when paused).
+/// Messages from the page: new settings, what is playing (`None` when paused), or a request
+/// the app answers through `window.__scClient.reply`.
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Message {
     Settings(Settings),
     Now(NowPlaying),
+    Call(Call),
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -74,6 +138,18 @@ pub struct NowPlaying {
     pub artist: String,
     pub title: String,
     pub seconds: u32,
+    /// The mix this is a track of, when the page knows the mix tracklist.
+    pub album: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Call {
+    pub call: String,
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub args: serde_json::Value,
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
@@ -111,16 +187,36 @@ mod tests {
             artist: "Artist".into(),
             title: "Track".into(),
             seconds: 200,
+            album: "Mix".into(),
         };
-        let json = r#"{"now":"Track - Artist","artist":"Artist","title":"Track","seconds":200}"#;
+        let json = r#"{"now":"Track - Artist","artist":"Artist","title":"Track","seconds":200,"album":"Mix"}"#;
         assert_eq!(parse(json), Some(Message::Now(playing)));
         assert_eq!(parse(r#"{"now":null}"#), Some(Message::Now(NowPlaying::default())));
         assert_eq!(parse(r#"{"command":"delete"}"#), None);
+        let call =
+            Call { call: "open".into(), id: 3, args: serde_json::json!({"url": "https://x"}) };
+        assert_eq!(
+            parse(r#"{"call":"open","id":3,"args":{"url":"https://x"}}"#),
+            Some(Message::Call(call))
+        );
+    }
+
+    #[test]
+    fn start_pages_and_shortcut_bounds() {
+        let parsed: Settings = serde_json::from_str(r#"{"start_page":"likes"}"#).unwrap();
+        assert_eq!(parsed.start_page.path(), "/you/likes");
+        assert!(serde_json::from_str::<Settings>(r#"{"start_page":"https://evil"}"#).is_err());
+        let mut many = Settings::default();
+        for i in 0..40 {
+            many.shortcuts.insert(format!("a{i:02}"), "Ctrl+Alt+Shift+P".into());
+        }
+        many.shortcuts.insert("x".repeat(80), "P".into());
+        assert_eq!(many.sanitized().shortcuts.len(), 24);
     }
 
     #[test]
     fn minimized_zero_size_is_not_saved() {
-        assert!(!WindowState { x: 0, y: 0, w: 0, h: 0 }.valid());
-        assert!(WindowState { x: -100, y: 0, w: 1280, h: 800 }.valid());
+        assert!(!WindowState { x: 0, y: 0, w: 0, h: 0, last: String::new() }.valid());
+        assert!(WindowState { x: -100, y: 0, w: 1280, h: 800, last: String::new() }.valid());
     }
 }

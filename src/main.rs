@@ -6,8 +6,12 @@ mod instance;
 mod lastfm;
 mod policy;
 mod settings;
+mod shell;
 
-use settings::{read_json, write_json, Message, NowPlaying, Settings, WindowState};
+use serde_json::{json, Value};
+use settings::{
+    read_json, write_json, Call, Message, NowPlaying, Settings, StartPage, WindowState,
+};
 use std::{
     cell::{Cell, RefCell},
     io::Write,
@@ -24,7 +28,7 @@ use tao::{
     window::{Icon, Window, WindowBuilder, WindowId},
 };
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 use wry::{
@@ -39,6 +43,9 @@ const SAVE_DELAY: Duration = Duration::from_millis(350);
 enum Action {
     Settings(Settings),
     Now(NowPlaying),
+    Call(Call),
+    /// A page command from the tray, hotkeys or the remote: `window.__scClient.command`.
+    Command(&'static str, Value),
     PageLoaded,
     ClosePopup(WindowId),
     Show,
@@ -80,8 +87,8 @@ fn set_background(view: &WebView, hidden: bool, efficiency: bool) {
 
 fn apply_window(
     window: &Window,
-    next: Settings,
-    previous: Settings,
+    next: &Settings,
+    previous: &Settings,
     normal: &mut PhysicalSize<u32>,
 ) {
     window.set_always_on_top(next.always_on_top);
@@ -109,17 +116,55 @@ fn scrobble(lastfm: &Option<std::sync::mpsc::Sender<lastfm::Event>>, event: last
 /// Shown while music keeps playing behind a closed window.
 fn tray(rgba: &[u8], w: u32, h: u32, tooltip: &str) -> Option<TrayIcon> {
     let item = |id: &str, label: &str| MenuItem::with_id(id, label, true, None);
-    let (show, play, quit) = (
+    let (show, play, next, quit) = (
         item("show", &format!("Show {APP_NAME}")),
         item("play", "Play/Pause"),
+        item("next", "Next track"),
         item("quit", "Quit"),
     );
+    let sleep = Submenu::with_items(
+        "Sleep timer",
+        true,
+        &[
+            &item("sleep:15", "15 minutes"),
+            &item("sleep:30", "30 minutes"),
+            &item("sleep:60", "1 hour"),
+            &item("sleep:-1", "End of this track"),
+            &item("sleep:0", "Off"),
+        ],
+    )
+    .ok()?;
+    let separator = PredefinedMenuItem::separator();
+    let menu = Menu::with_items(&[&show, &play, &next, &sleep, &separator, &quit]).ok()?;
     TrayIconBuilder::new()
         .with_icon(tray_icon::Icon::from_rgba(rgba.to_vec(), w, h).ok()?)
         .with_tooltip(tooltip)
-        .with_menu(Box::new(Menu::with_items(&[&show, &play, &quit]).ok()?))
+        .with_menu(Box::new(menu))
         .build()
         .ok()
+}
+
+/// Settles a page request: `window.__scClient.reply(id, value, error)`.
+fn reply(view: &WebView, id: u32, result: Result<Value, String>) {
+    let (value, error) = match result {
+        Ok(value) => (value, Value::Null),
+        Err(error) => (Value::Null, Value::String(error)),
+    };
+    let _ = view.evaluate_script(&format!("window.__scClient?.reply({id},{value},{error});"));
+}
+
+/// Requests from the page that need the app. Each validates its own arguments.
+fn answer(call: &Call) -> Result<Value, String> {
+    match call.call.as_str() {
+        "open" => {
+            let url = call.args["url"]
+                .as_str()
+                .and_then(policy::external)
+                .ok_or("not an external https link")?;
+            Ok(json!(shell::open_url(&url)))
+        }
+        other => Err(format!("unknown request {other}")),
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -162,8 +207,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let action = match event.id.0.as_str() {
             "play" => Action::PlayPause,
+            "next" => Action::Command("next", Value::Null),
             "quit" => Action::Quit,
-            _ => Action::Show,
+            id => match id.strip_prefix("sleep:").and_then(|minutes| minutes.parse::<i32>().ok()) {
+                Some(minutes) => Action::Command("sleep", json!(minutes)),
+                None => Action::Show,
+            },
         };
         let _ = menu_proxy.lock().unwrap().send_event(action);
     }));
@@ -172,9 +221,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_title(APP_NAME)
         .with_inner_size(LogicalSize::new(1280.0, 800.0))
         .with_min_inner_size(LogicalSize::new(360.0, 400.0));
-    if let Some(state) =
-        read_json::<WindowState>(&dir.join("window.json")).filter(WindowState::valid)
-    {
+    let saved = read_json::<WindowState>(&dir.join("window.json")).filter(WindowState::valid);
+    if let Some(state) = &saved {
         builder = builder.with_inner_size(PhysicalSize::new(state.w, state.h));
         let on_screen = event_loop.available_monitors().any(|monitor| {
             let (pos, size) = (monitor.position(), monitor.size());
@@ -195,16 +243,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log(&dir, started, "window_built");
     let mut normal_size = window.inner_size();
     let position = window.outer_position().unwrap_or(PhysicalPosition::new(100, 100));
-    let mut win_state =
-        WindowState { x: position.x, y: position.y, w: normal_size.width, h: normal_size.height };
-    apply_window(&window, prefs, Settings { compact: false, ..prefs }, &mut normal_size);
+    let mut win_state = WindowState {
+        x: position.x,
+        y: position.y,
+        w: normal_size.width,
+        h: normal_size.height,
+        last: String::new(),
+    };
+    apply_window(&window, &prefs, &Settings { compact: false, ..prefs.clone() }, &mut normal_size);
 
     let mut context = WebContext::new(Some(dir.join("webview")));
     let script = format!(
         "window.__scInitialSettings={};window.__scLastfm={};\n{}",
         serde_json::to_string(&prefs)?,
         lastfm::KEY.is_some(),
-        include_str!("client.js")
+        include_str!(concat!(env!("OUT_DIR"), "/client.js"))
     );
     let discord = discord::start(discord::APP_ID);
     let lastfm = lastfm::KEY.map(|key| lastfm::start(key, dir.clone()));
@@ -214,24 +267,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let popups: Rc<RefCell<Vec<Popup>>> = Rc::default();
     let (popup_store, ipc_proxy, load_proxy, log_dir) =
         (popups.clone(), proxy.clone(), proxy.clone(), dir.clone());
+    // Links the page opens in a new window go to the browser, at most one a second.
+    let last_external = Cell::new(Instant::now() - Duration::from_secs(5));
+    // Hardware acceleration off is for machines where the GPU path misbehaves.
+    let browser_args = if prefs.gpu { "" } else { "--disable-gpu" };
     let view = WebViewBuilder::new_with_web_context(&mut context)
         .with_initialization_script(&script)
         .with_background_color((11, 11, 12, 255))
         .with_devtools(cfg!(debug_assertions))
-        // Explicit empty arguments avoid Wry's default SmartScreen-disabling flag.
-        // Standard Chromium background throttling and GPU acceleration remain enabled.
-        .with_additional_browser_args("")
+        // Explicit arguments avoid Wry's default SmartScreen-disabling flag.
+        // Standard Chromium background throttling stays enabled.
+        .with_additional_browser_args(browser_args)
         .with_navigation_handler(|url| policy::navigation_allowed(&url))
         .with_ipc_handler(move |request| {
-            if request.body().len() <= 4096 && policy::soundcloud_page(&request.uri().to_string()) {
-                let _ = ipc_proxy.send_event(match serde_json::from_str(request.body()) {
-                    Ok(Message::Settings(next)) => Action::Settings(next),
-                    Ok(Message::Now(now)) => Action::Now(now),
-                    Err(_) => return,
-                });
+            // Requests can carry data such as a library backup; settings and now-playing are small.
+            let body = request.body();
+            if body.len() > 32 * 1024 * 1024 || !policy::soundcloud_page(&request.uri().to_string())
+            {
+                return;
             }
+            let _ = ipc_proxy.send_event(match serde_json::from_str(body) {
+                Ok(Message::Settings(next)) if body.len() <= 16384 => {
+                    Action::Settings(next.sanitized())
+                }
+                Ok(Message::Now(now)) if body.len() <= 4096 => Action::Now(now),
+                Ok(Message::Call(call)) => Action::Call(call),
+                _ => return,
+            });
         })
         .with_new_window_req_handler(move |url, features| {
+            if let Some(external) = policy::external(&url) {
+                if last_external.get().elapsed() >= Duration::from_secs(1) {
+                    last_external.set(Instant::now());
+                    shell::open_url(&external);
+                }
+                return NewWindowResponse::Deny;
+            }
             if !policy::navigation_allowed(&url) || popup_store.borrow().len() >= 3 {
                 return NewWindowResponse::Deny;
             }
@@ -274,11 +345,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(&window)?;
     log(&dir, started, "webview_built");
-    let filter_prefs = Rc::new(Cell::new(prefs));
+    let rules =
+        |prefs: &Settings| filter::Rules { cleanup: prefs.cleanup, efficiency: prefs.efficiency };
+    let filter_prefs = Rc::new(Cell::new(rules(&prefs)));
     if let Err(error) = filter::install(&view, filter_prefs.clone()) {
         log(&dir, started, &format!("optional_resource_filter_unavailable {error}"));
     }
-    view.load_url("https://soundcloud.com/discover")?;
+    // The chosen start page, or the page open at the last exit.
+    let last = saved.map(|state| state.last).filter(|path| {
+        path.starts_with('/') && policy::soundcloud_page(&format!("https://soundcloud.com{path}"))
+    });
+    let start = match (prefs.start_page, last) {
+        (StartPage::Last, Some(path)) => path,
+        (page, _) => page.path().into(),
+    };
+    view.load_url(&format!("https://soundcloud.com{start}"))?;
     let (mut save_at, mut minimized) = (None::<Instant>, false);
     let (mut now_playing, mut tray_icon) = (None::<String>, None::<TrayIcon>);
 
@@ -291,6 +372,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     scrobble(
                         &lastfm,
                         match &now.now {
+                            // Unknown tracks inside a mix ("ID - ID") are shown, never scrobbled.
+                            Some(_) if now.artist.is_empty() && now.title.is_empty() => {
+                                lastfm::Event::Paused
+                            }
                             Some(_) => {
                                 let (artist, title) = lastfm::split(&now.artist, &now.title);
                                 lastfm::Event::Playing { artist, title, seconds: now.seconds }
@@ -321,6 +406,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ =
                     view.evaluate_script("document.querySelector('.playControls__play')?.click()");
             }
+            Event::UserEvent(Action::Command(name, arg)) => {
+                let script = format!("window.__scClient?.command({},{arg});", json!(name));
+                let _ = view.evaluate_script(&script);
+            }
+            Event::UserEvent(Action::Call(call)) => reply(&view, call.id, answer(&call)),
             Event::UserEvent(Action::Quit) => exit = true,
             Event::UserEvent(Action::ClosePopup(id)) => {
                 popups.borrow_mut().retain(|p| p.window.id() != id)
@@ -341,9 +431,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if next.discord != prefs.discord {
                     let _ = discord.send(now_playing.clone().filter(|_| next.discord));
                 }
-                apply_window(&window, next, prefs, &mut normal_size);
+                apply_window(&window, &next, &prefs, &mut normal_size);
                 prefs = next;
-                filter_prefs.set(prefs);
+                filter_prefs.set(rules(&prefs));
                 if let Err(error) = write_json(&dir.join("settings.json"), &prefs) {
                     log(&dir, started, &format!("settings_save_failed {error}"));
                 }
@@ -401,6 +491,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         // Window-state writes wait for a pause in move/resize storms, and happen on close.
+        if exit {
+            win_state.last = view
+                .url()
+                .ok()
+                .filter(|url| policy::soundcloud_page(url))
+                .and_then(|url| url::Url::parse(&url).ok())
+                .map(|url| url.path().chars().take(512).collect())
+                .unwrap_or_default();
+        }
         if (exit || save_at.is_some_and(|at| Instant::now() >= at)) && win_state.valid() {
             save_at = None;
             if let Err(error) = write_json(&dir.join("window.json"), &win_state) {

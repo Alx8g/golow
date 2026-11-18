@@ -36,6 +36,11 @@ pub fn navigation_allowed(raw: &str) -> bool {
         })
 }
 
+/// Links GoLow does not show itself, such as an artist's website, go to the default browser.
+pub fn external(raw: &str) -> Option<Url> {
+    trusted_https(raw).filter(|_| !navigation_allowed(raw))
+}
+
 pub fn soundcloud_page(raw: &str) -> bool {
     trusted_https(raw)
         .is_some_and(|url| matches!(url.host_str(), Some("soundcloud.com" | "www.soundcloud.com")))
@@ -75,5 +80,21 @@ mod tests {
             assert!(!soundcloud_page(url), "{url}");
         }
         assert!(!soundcloud_page("https://secure.soundcloud.com/"));
+    }
+
+    #[test]
+    fn only_outside_https_links_go_to_the_browser() {
+        assert!(external("https://gate.sc/?url=https%3A%2F%2Fartist.example").is_some());
+        assert!(external("https://www.1001tracklists.com/").is_some());
+        for url in [
+            "https://soundcloud.com/discover",
+            "http://example.com/",
+            "file:///C:/Windows/System32/calc.exe",
+            "https://user:pass@example.com/",
+            "https://example.com:8443/",
+            "javascript:alert(1)",
+        ] {
+            assert!(external(url).is_none(), "{url}");
+        }
     }
 }

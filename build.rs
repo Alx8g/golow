@@ -15,6 +15,22 @@ fn main() {
     println!("cargo:rustc-env=APP_ICON_HEIGHT={height}");
     println!("cargo:rustc-env=APP_NAME={APP_NAME}");
 
+    // The page script: src/page/*.js joined in name order inside one function scope.
+    println!("cargo:rerun-if-changed=src/page");
+    let mut parts: Vec<PathBuf> = fs::read_dir(manifest.join("src/page"))
+        .expect("src/page")
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "js"))
+        .collect();
+    parts.sort();
+    let mut script = String::from("(() => {\n");
+    for part in &parts {
+        script += &fs::read_to_string(part).expect("read page script");
+        script.push('\n');
+    }
+    script += "})();\n";
+    fs::write(out.join("client.js"), script).expect("write page script");
+
     let icon = manifest.join("assets").join("icon.ico");
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let exe = format!("{}.exe", env::var("CARGO_PKG_NAME").unwrap());
