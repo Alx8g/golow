@@ -86,17 +86,38 @@ pub fn install(release: &Release) -> Result<PathBuf, String> {
 }
 
 /// Starts the installed build once this process has exited.
-pub fn relaunch(exe: &PathBuf) -> bool {
-    std::process::Command::new(exe)
-        .args(["--after", &std::process::id().to_string()])
-        .spawn()
-        .is_ok()
+fn relaunch_command(exe: &PathBuf, profile: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(exe);
+    command.args(["--after", &std::process::id().to_string()]);
+    if !profile.is_empty() {
+        command.args(["--profile", profile]);
+    }
+    command
+}
+
+pub fn relaunch(exe: &PathBuf, profile: &str) -> bool {
+    relaunch_command(exe, profile).spawn().is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn restart_keeps_named_profiles_as_one_argument() {
+        let exe = PathBuf::from("golow.exe");
+        for profile in ["", "Work", "dj sets"] {
+            let command = relaunch_command(&exe, profile);
+            let args: Vec<_> = command.get_args().map(|arg| arg.to_str().unwrap()).collect();
+            assert_eq!(&args[..2], ["--after", &std::process::id().to_string()]);
+            if profile.is_empty() {
+                assert_eq!(args.len(), 2);
+            } else {
+                assert_eq!(&args[2..], ["--profile", profile]);
+            }
+        }
+    }
 
     #[test]
     fn compares_versions_by_number() {

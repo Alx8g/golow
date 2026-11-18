@@ -32,6 +32,17 @@ fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args[key].as_str().ok_or_else(|| format!("missing {key}"))
 }
 
+fn checked_update(
+    release: Option<update::Release>,
+    publish: impl FnOnce(update::Release),
+) -> Value {
+    release.map_or(Value::Null, |release| {
+        let info = json!({"version": release.version, "page": release.page});
+        publish(release);
+        info
+    })
+}
+
 /// Profile names are folder names: letters, digits, spaces, dashes and underscores.
 pub fn valid_profile(name: &str) -> bool {
     name.is_empty()
@@ -160,8 +171,11 @@ impl Services {
                 Ok(Value::Null)
             }
             "update_check" => {
-                return self.later(call.id, || {
-                    Ok(update::check().map_or(Value::Null, |release| json!({"version": release.version, "page": release.page})))
+                let proxy = self.proxy.clone();
+                return self.later(call.id, move || {
+                    Ok(checked_update(update::check(), |release| {
+                        let _ = proxy.send_event(Action::Update(release));
+                    }))
                 })
             }
             "update_install" => {
@@ -176,7 +190,7 @@ impl Services {
                 });
             }
             "restart" => match &self.installed {
-                Some(exe) if update::relaunch(exe) => {
+                Some(exe) if update::relaunch(exe, &self.profile) => {
                     let _ = self.proxy.send_event(Action::Quit);
                     Ok(Value::Null)
                 }
@@ -209,6 +223,18 @@ impl Services {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_check_publishes_the_installable_release_before_returning_metadata() {
+        let release = update::parse(&json!({"tag_name": "v0.3.0", "assets": [
+            {"name": "golow.exe", "browser_download_url": "https://github.com/Alx8g/golow/releases/download/v0.3.0/golow.exe"},
+            {"name": "golow.exe.sha256", "browser_download_url": "https://github.com/Alx8g/golow/releases/download/v0.3.0/golow.exe.sha256"}
+        ]})).unwrap();
+        let mut installed_release = None;
+        let info = checked_update(Some(release), |release| installed_release = Some(release));
+        assert_eq!(installed_release.unwrap().version, info["version"].as_str().unwrap());
+        assert_eq!(checked_update(None, |_| panic!("no release")), Value::Null);
+    }
 
     #[test]
     fn profile_names_are_plain_folder_names() {
