@@ -58,7 +58,7 @@ document.addEventListener('keydown', event => {
   recording = null;
   refreshPanel('shortcuts');
 }, true);
-tabs.push({id: 'shortcuts', label: 'Shortcuts', order: 9, render(body) {
+tabs.push({id: 'shortcuts', label: 'Shortcuts', order: 9, aside: true, render(body) {
   body.append(h('h2', {text: 'System-wide shortcuts'}),
     h('p', {text: settings.hotkeys ? 'These work from any app. Click one, then press the new keys; Backspace clears it.' : 'Turn on System-wide shortcuts in settings to use these from any app.'}),
     h('ul', {cls: 'list'}, Object.keys(appInfo.hotkeys).map(action => {
@@ -89,7 +89,7 @@ function qrCode({size, modules}) {
   svg.append(background, path);
   return svg;
 }
-tabs.push({id: 'remote', label: 'Remote', order: 10, render(body) {
+tabs.push({id: 'remote', label: 'Remote', order: 10, aside: true, render(body) {
   body.append(h('h2', {text: 'Phone remote'}));
   if (!settings.remote) {
     return body.append(h('p', {text: 'Control GoLow from your phone: play, pause, skip, volume and like. Your phone needs to be on the same Wi-Fi as this PC.'}),
@@ -140,7 +140,7 @@ on('app', (name, data) => {
 });
 
 // --- Accounts ---
-tabs.push({id: 'accounts', label: 'Accounts', order: 11, render(body) {
+tabs.push({id: 'accounts', label: 'Accounts', order: 11, aside: true, render(body) {
   body.append(h('h2', {text: 'Accounts'}), h('p', {text: 'Each account keeps its own sign-in, settings and history. Switching restarts GoLow.'}));
   const list = h('ul', {cls: 'list'});
   body.append(list);

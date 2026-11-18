@@ -7,6 +7,7 @@ mod hotkeys;
 mod http;
 mod instance;
 mod lastfm;
+mod lyrics;
 mod native;
 mod notify;
 mod policy;
