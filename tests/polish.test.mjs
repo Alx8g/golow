@@ -65,10 +65,14 @@ const checks = `(async () => {
   // A comment posts once, however often Enter is pressed.
   const frame = byId('webi').contentDocument;
   frame.getElementById('comment').value = 'Great track';
+  frame.querySelector('button[aria-label="Post comment"]').click();
   frame.getElementById('form').requestSubmit();
   frame.getElementById('form').requestSubmit();
   await wait(20);
   assert(byId('webi').contentWindow.__posts === 1, 'second identical submit blocked: ' + byId('webi').contentWindow.__posts);
+  frame.getElementById('comment').value = 'Another comment';
+  frame.querySelector('button[aria-label="Post comment"]').click();
+  assert(byId('webi').contentWindow.__posts === 2, 'different comment still posts by click');
 
   // The stream quality shows once the player asks for a stream.
   byId('badge').setAttribute('href', '/a/song'); byId('badge').title = 'Song';
