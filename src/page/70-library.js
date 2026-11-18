@@ -84,11 +84,15 @@ async function compare(previous, latest) {
     for (const t of list.tracks) if (!present.has(t.id)) lostFromLists.push({...t, list: list.title});
   }
   const all = [...lostLikes, ...lostFromLists];
-  const stillThere = new Set();
-  for (let i = 0; i < all.length && i < 500; i += 50) {
-    for (const t of await api('tracks', {ids: all.slice(i, i + 50).map(t => t.id).join(',')}).catch(() => []) || []) stillThere.add(t.id);
+  const stillThere = new Set(), checked = new Set(), ids = [...new Set(all.map(t => t.id))];
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const found = await api('tracks', {ids: batch.join(',')}).catch(() => null);
+    if (!Array.isArray(found)) continue;
+    for (const id of batch) checked.add(id);
+    for (const t of found) stillThere.add(t.id);
   }
-  return all.map(t => ({...t, gone: !stillThere.has(t.id)}));
+  return all.map(t => ({...t, gone: checked.has(t.id) ? !stillThere.has(t.id) : null}));
 }
 function csv(rows) {
   return rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -119,13 +123,14 @@ tabs.push({id: 'library', label: 'Library', order: 4, render(body) {
       h('button', {cls: 'btn', type: 'button', text: 'Export likes', disabled: !latest, onclick: exportLikes}),
       h('button', {cls: 'btn', type: 'button', text: 'Open folder', onclick: () => call('open_folder', {which: 'data'}).catch(() => {})})));
   if (missing?.length) {
-    const gone = missing.filter(t => t.gone), removed = missing.filter(t => !t.gone);
+    const gone = missing.filter(t => t.gone === true), removed = missing.filter(t => t.gone === false), unknown = missing.filter(t => t.gone === null);
     const row = t => h('li', {}, h('div', {cls: 'grow'}, h('div', {cls: 'clip', text: t.title || `Track ${t.id}`}),
       h('div', {cls: 'clip dim', text: [t.artist, t.list ? `from ${t.list}` : 'from your likes'].filter(Boolean).join(' · ')})),
       t.gone ? h('a', {href: 'https://soundcloud.com/search?q=' + encodeURIComponent(`${t.artist} ${t.title}`), text: 'Search'}) :
         h('a', {href: t.path, text: 'Open'}));
     if (gone.length) body.append(h('h3', {text: `Gone from SoundCloud since the backup before · ${gone.length}`}), h('ul', {cls: 'list'}, gone.slice(0, 200).map(row)));
     if (removed.length) body.append(h('h3', {text: `No longer in your likes or playlists · ${removed.length}`}), h('ul', {cls: 'list'}, removed.slice(0, 200).map(row)));
+    if (unknown.length) body.append(h('h3', {text: `Availability could not be checked · ${unknown.length}`}), h('ul', {cls: 'list'}, unknown.slice(0, 200).map(row)));
   } else if (missing) {
     body.append(h('p', {text: 'Nothing has disappeared since the backup before.'}));
   }
