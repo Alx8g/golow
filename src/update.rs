@@ -163,6 +163,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     use serde_json::Value;
     use std::path::PathBuf;

@@ -90,6 +90,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     pub fn register(_dir: &std::path::Path) -> bool {
         false

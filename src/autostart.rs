@@ -77,6 +77,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     pub fn set(_on: bool, _profile: &str) -> bool {
         false

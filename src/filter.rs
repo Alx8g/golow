@@ -20,6 +20,7 @@ use wry::WebViewExtWindows;
 /// hidden Artist Tools frame document and follow `cleanup`; the rest are ad and tracking
 /// bootstraps and follow `efficiency`. Media, consent, OAuth, fraud prevention and the
 /// standby player frame are never listed.
+#[cfg_attr(not(windows), allow(dead_code))]
 const RULES: &[(&str, &str, bool)] = &[
     ("soundcloud.com", "/n/embeds/credit-tracker", true),
     ("www.soundcloud.com", "/n/embeds/credit-tracker", true),
@@ -52,6 +53,7 @@ pub struct Rules {
     pub efficiency: bool,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn blocked(raw: &str, document: bool, prefs: Rules) -> bool {
     let Some(url) = trusted_https(raw) else {
         return false;

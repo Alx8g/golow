@@ -163,6 +163,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     use std::collections::BTreeMap;
     pub const ACTIONS: &[(&str, &str)] = &[

@@ -180,6 +180,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     pub const PREVIOUS: u32 = 1;
     pub const PLAY: u32 = 2;

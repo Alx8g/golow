@@ -64,6 +64,7 @@ enum Action {
     Command(&'static str, Value),
     Hotkey(usize),
     TaskbarReady,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Zoom(f64),
     Update(update::Release),
     Installed(PathBuf),

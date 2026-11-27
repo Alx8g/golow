@@ -58,6 +58,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     pub enum Native {
         Hotkey(usize),

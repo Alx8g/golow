@@ -138,6 +138,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     use std::sync::mpsc::{channel, Sender};
     pub const APP_ID: &str = match option_env!("GOLOW_DISCORD_APP_ID") {

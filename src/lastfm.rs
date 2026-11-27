@@ -334,6 +334,7 @@ pub use imp::*;
 
 #[cfg(not(windows))]
 mod imp {
+    #![allow(dead_code)]
 
     use std::sync::mpsc::{channel, Sender};
     pub const KEY: Option<&str> = None;
