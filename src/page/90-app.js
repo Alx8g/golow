@@ -46,7 +46,7 @@ const keyName = code => code.replace(/^Key|^Digit|^Arrow/, '').replace(/^Numpad/
 function combination(event) {
   const key = keyName(event.code);
   if (/^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/.test(event.code) || /^Numpad/.test(key)) return null;
-  return [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Win', key].filter(Boolean).join('+');
+  return [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && (appInfo.platform === 'macos' ? 'Cmd' : 'Win'), key].filter(Boolean).join('+');
 }
 document.addEventListener('keydown', event => {
   if (!recording) return;
@@ -55,7 +55,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { recording = null; return refreshPanel('shortcuts'); }
   const keys = event.key === 'Backspace' ? '' : combination(event);
   if (keys === null) return;
-  if (keys && !/(Ctrl|Alt|Win)\+/.test(keys) && !/^F\d+$/.test(keys)) return toast('Use Ctrl, Alt or Win with the key, so typing elsewhere still works.');
+  if (keys && !/(Ctrl|Alt|Win|Cmd)\+/.test(keys) && !/^F\d+$/.test(keys)) return toast(appInfo.platform === 'macos' ? 'Use Ctrl, Alt or Cmd with the key, so typing elsewhere still works.' : 'Use Ctrl, Alt or Win with the key, so typing elsewhere still works.');
   change('shortcuts', {...settings.shortcuts, [recording]: keys});
   recording = null;
   refreshPanel('shortcuts');

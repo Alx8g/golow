@@ -307,7 +307,7 @@ fn init_script(
     profile: &str,
     launched: u64,
 ) -> Result<String, serde_json::Error> {
-    let hotkey_map = if cfg!(windows) {
+    let hotkey_map = if cfg!(any(windows, target_os = "macos")) {
         hotkeys::ACTIONS
             .iter()
             .map(|(action, keys)| (action.to_string(), json!(keys)))
@@ -324,7 +324,7 @@ fn init_script(
             "autostart": cfg!(any(windows, target_os = "macos")),
             "discord": cfg!(any(windows, unix)),
             "gpu": cfg!(windows),
-            "hotkeys": cfg!(windows),
+            "hotkeys": cfg!(any(windows, target_os = "macos")),
             "notifications": cfg!(any(windows, target_os = "macos")),
             "updates": cfg!(windows),
         },
@@ -390,6 +390,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = tray_proxy.lock().unwrap().send_event(Action::Show);
         }
     }));
+    let hotkey_proxy = proxy.clone();
+    hotkeys::listen(move |id| {
+        let _ = hotkey_proxy.send_event(Action::Hotkey(id));
+    });
     let menu_proxy = Mutex::new(proxy.clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let action = match event.id.0.as_str() {

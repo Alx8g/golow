@@ -77,6 +77,8 @@ try {
     navigator.mediaSession.setActionHandler('nexttrack', () => commands.next());
     navigator.mediaSession.setActionHandler('previoustrack', () => commands.previous());
     navigator.mediaSession.setActionHandler('seekto', event => { if (event.seekTime != null) seekTo(event.seekTime); });
+    navigator.mediaSession.setActionHandler('seekbackward', event => commands.back(event.seekOffset || pref('skip_back')));
+    navigator.mediaSession.setActionHandler('seekforward', event => commands.forward(event.seekOffset || pref('skip_forward')));
   }
 } catch {}
 let mediaSig;
