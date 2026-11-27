@@ -235,9 +235,10 @@ mod tests {
 
     #[test]
     fn manual_check_publishes_the_installable_release_before_returning_metadata() {
+        let asset = if cfg!(target_os = "macos") { "golow-macos.zip" } else { "golow.exe" };
         let release = update::parse(&json!({"tag_name": "v0.3.0", "assets": [
-            {"name": "golow.exe", "browser_download_url": "https://github.com/Alx8g/golow/releases/download/v0.3.0/golow.exe"},
-            {"name": "golow.exe.sha256", "browser_download_url": "https://github.com/Alx8g/golow/releases/download/v0.3.0/golow.exe.sha256"}
+            {"name": asset, "browser_download_url": format!("https://github.com/Alx8g/golow/releases/download/v0.3.0/{asset}")},
+            {"name": format!("{asset}.sha256"), "browser_download_url": format!("https://github.com/Alx8g/golow/releases/download/v0.3.0/{asset}.sha256")}
         ]})).unwrap();
         let mut installed_release = None;
         let info = checked_update(Some(release), |release| installed_release = Some(release));

@@ -257,12 +257,22 @@ fn app_menu() -> Menu {
         &PredefinedMenuItem::paste(None),
         &PredefinedMenuItem::select_all(None),
     ]);
+    let playback = Submenu::new("Playback", true);
+    let playback_item = |id: &'static str, text: &'static str| MenuItem::with_id(id, text, true, None);
+    let (play, previous, next, back, forward) = (
+        playback_item("play", "Play or Pause"),
+        playback_item("previous", "Previous Track"),
+        playback_item("next", "Next Track"),
+        playback_item("back", "Skip Back"),
+        playback_item("forward", "Skip Forward"),
+    );
+    let _ = playback.append_items(&[&play, &previous, &next, &PredefinedMenuItem::separator(), &back, &forward]);
     let window = Submenu::new("Window", true);
     let _ = window.append_items(&[
         &PredefinedMenuItem::minimize(None),
         &PredefinedMenuItem::close_window(None),
     ]);
-    let _ = menu.append_items(&[&app, &edit, &window]);
+    let _ = menu.append_items(&[&app, &edit, &playback, &window]);
     menu.init_for_nsapp();
     window.set_as_windows_menu_for_nsapp();
     menu
@@ -326,7 +336,7 @@ fn init_script(
             "gpu": cfg!(windows),
             "hotkeys": cfg!(any(windows, target_os = "macos")),
             "notifications": cfg!(any(windows, target_os = "macos")),
-            "updates": cfg!(windows),
+            "updates": cfg!(any(windows, target_os = "macos")),
         },
         "lastfm": lastfm::KEY.is_some(),
         "hotkeys": hotkey_map,
@@ -399,6 +409,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let action = match event.id.0.as_str() {
             "play" => Action::PlayPause,
             "next" => Action::Command("next", Value::Null),
+            "previous" => Action::Command("previous", Value::Null),
+            "back" => Action::Command("back", Value::Null),
+            "forward" => Action::Command("forward", Value::Null),
             "quit" => Action::Quit,
             id => match id.strip_prefix("sleep:").and_then(|minutes| minutes.parse::<i32>().ok()) {
                 Some(minutes) => Action::Command("sleep", json!(minutes)),
