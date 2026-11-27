@@ -1,5 +1,6 @@
 use crate::{policy::trusted_https, settings::Settings};
 use std::{cell::Cell, rc::Rc};
+#[cfg(windows)]
 use webview2_com::{
     take_pwstr,
     Microsoft::Web::WebView2::Win32::{
@@ -9,13 +10,17 @@ use webview2_com::{
     },
     NavigationStartingEventHandler, WebResourceRequestedEventHandler,
 };
+#[cfg(windows)]
 use windows::core::{Interface, HSTRING, PWSTR};
-use wry::{WebView, WebViewExtWindows};
+use wry::WebView;
+#[cfg(windows)]
+use wry::WebViewExtWindows;
 
 /// Exact (host, path, promo) resources observed in profiling. Promo rules match only the
 /// hidden Artist Tools frame document and follow `cleanup`; the rest are ad and tracking
 /// bootstraps and follow `efficiency`. Media, consent, OAuth, fraud prevention and the
 /// standby player frame are never listed.
+#[cfg_attr(not(windows), allow(dead_code))]
 const RULES: &[(&str, &str, bool)] = &[
     ("soundcloud.com", "/n/embeds/credit-tracker", true),
     ("www.soundcloud.com", "/n/embeds/credit-tracker", true),
@@ -28,6 +33,7 @@ const RULES: &[(&str, &str, bool)] = &[
     ("analytics.tiktok.com", "/i18n/pixel/events.js", false),
 ];
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn blocked(raw: &str, document: bool, prefs: Settings) -> bool {
     let Some(url) = trusted_https(raw) else {
         return false;
@@ -39,6 +45,13 @@ pub fn blocked(raw: &str, document: bool, prefs: Settings) -> bool {
     })
 }
 
+/// WKWebView has no per-request hook, so the optional resource filter is Windows-only.
+#[cfg(not(windows))]
+pub fn install(_view: &WebView, _prefs: Rc<Cell<Settings>>) -> Result<(), std::convert::Infallible> {
+    Ok(())
+}
+
+#[cfg(windows)]
 pub fn install(view: &WebView, prefs: Rc<Cell<Settings>>) -> windows::core::Result<()> {
     let native = view.webview();
     // This API includes iframe requests, unlike the deprecated two-argument filter.

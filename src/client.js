@@ -162,7 +162,7 @@
         input::before{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s}
         input:checked{background:#5cf2a8}input:checked::before{transform:translateX(12px)}
         </style>
-        <button id="open" class="icon" aria-label="GoLow settings" aria-expanded="false" title="GoLow settings (Ctrl+,)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+        <button id="open" class="icon" aria-label="GoLow settings" aria-expanded="false" title="GoLow settings (Ctrl+, or Cmd+,)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
         <button id="expand" class="icon" aria-label="Exit mini player" title="Exit mini player"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>`;
       $('open').addEventListener('click', () => openSettings(!panel || panel.hidden));
       $('expand').addEventListener('click', () => change('compact', false));
@@ -415,7 +415,7 @@
   }
 
   document.addEventListener('keydown', event => {
-    if (event.ctrlKey && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
+    if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
     if (event.key === 'Escape' && panel && !panel.hidden) { openSettings(false); $('open').focus(); }
   });
   document.addEventListener('click', event => {

@@ -15,6 +15,12 @@ fn main() {
     println!("cargo:rustc-env=APP_ICON_HEIGHT={height}");
     println!("cargo:rustc-env=APP_NAME={APP_NAME}");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        embed_windows_resources(&manifest, &out);
+    }
+}
+
+fn embed_windows_resources(manifest: &std::path::Path, out: &std::path::Path) {
     let icon = manifest.join("assets").join("icon.ico");
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let exe = format!("{}.exe", env::var("CARGO_PKG_NAME").unwrap());

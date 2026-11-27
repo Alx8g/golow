@@ -30,3 +30,6 @@ opt-level = 3
 codegen-units = 1
 lto = true
 strip = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
