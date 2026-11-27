@@ -52,6 +52,7 @@ function watchPlayer() {
   }
   emit('tick');
   report();
+  publishMediaSession();
   if (!settings.autoplay) document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
 }
 // Tells the app what is playing: the window title, the tray, Discord and Last.fm. Inside a mix
@@ -66,6 +67,41 @@ function report() {
   if (message.now === reported) return;
   reported = message.now;
   send(message);
+}
+// System media controls (macOS Control Center, the notch and media keys) use the page's own
+// media session. Explicit play and pause preserve state instead of blindly toggling it.
+try {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.setActionHandler('play', () => { if (!player.playing) commands.toggle(); });
+    navigator.mediaSession.setActionHandler('pause', () => { if (player.playing) commands.toggle(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => commands.next());
+    navigator.mediaSession.setActionHandler('previoustrack', () => commands.previous());
+    navigator.mediaSession.setActionHandler('seekto', event => { if (event.seekTime != null) seekTo(event.seekTime); });
+  }
+} catch {}
+let mediaSig;
+function publishMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    if (!player.title) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+      mediaSig = null;
+      return;
+    }
+    const art = (tracks.get(player.path)?.artwork || '').replace(/-(large|t\d+x\d+)\./, '-t500x500.');
+    const sig = JSON.stringify([player.title, player.artist, art]);
+    if (sig !== mediaSig && typeof MediaMetadata !== 'undefined') {
+      mediaSig = sig;
+      navigator.mediaSession.metadata = new MediaMetadata({title: player.title, artist: player.artist, album: 'SoundCloud',
+        artwork: art ? [{src: art, sizes: '500x500', type: 'image/jpeg'}] : []});
+    }
+    navigator.mediaSession.playbackState = player.playing ? 'playing' : 'paused';
+    if (navigator.mediaSession.setPositionState && player.total > 0) {
+      navigator.mediaSession.setPositionState({duration: player.total, playbackRate: media.el?.playbackRate || 1,
+        position: Math.min(position(), player.total)});
+    }
+  } catch {}
 }
 on('track', () => autoplayOff());
 

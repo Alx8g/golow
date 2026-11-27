@@ -1,8 +1,8 @@
 // Discovery: a release radar of what the artists you follow uploaded (not what they reposted),
 // with optional Windows notifications, and lyrics for what is playing.
 menu.push(
-  {section: 'Lists and feed', key: 'notify', label: 'Notify me about new releases',
-    hint: 'A Windows notification when artists you follow upload, while GoLow is open or in the tray.'},
+  {section: 'Lists and feed', key: 'notify', label: 'Notify me about new releases', when: () => !!window.__scApp?.capabilities?.notifications,
+    hint: 'A notification when artists you follow upload, while GoLow is open or in the tray.'},
 );
 
 // --- Release radar ---

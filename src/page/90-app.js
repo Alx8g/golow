@@ -6,18 +6,18 @@ menu.push(
   {section: 'Sharing', key: 'now_file', label: 'Now-playing file for stream overlays',
     hint: 'Writes "Artist - Title" to now-playing.txt in GoLow\'s folder, for OBS and similar.'},
   {section: 'Sharing', key: 'open_app_folder', type: 'button', label: 'Open GoLow\'s folder', action: () => call('open_folder', {which: 'app'}).catch(() => {})},
-  {section: 'App', key: 'background', label: 'Start with Windows, ready in the tray', hint: 'GoLow loads hidden when you sign in to Windows, so opening it is instant.'},
+  {section: 'App', key: 'background', label: 'Start with Windows, ready in the tray', when: () => !!window.__scApp?.capabilities?.autostart, hint: 'GoLow loads hidden when you sign in, so opening it is instant.'},
   {section: 'App', key: 'tray', label: 'Keep running in the tray when closed', hint: 'Closing the window keeps GoLow loaded, so it opens instantly next time.'},
   {section: 'App', key: 'start_page', label: 'Start page', type: 'select', options: [['discover', 'Home'], ['feed', 'Feed'], ['likes', 'Likes'],
     ['library', 'Library'], ['history', 'History'], ['last', 'Where I left off']]},
-  {section: 'App', key: 'hotkeys', label: 'System-wide shortcuts', hint: 'Control GoLow from any app. Ctrl+Alt+Shift with a letter by default.'},
-  {section: 'App', key: 'edit_shortcuts', type: 'button', label: 'Edit shortcuts', action: () => openPanel('shortcuts')},
+  {section: 'App', key: 'hotkeys', label: 'System-wide shortcuts', when: () => !!window.__scApp?.capabilities?.hotkeys, hint: 'Control GoLow from any app. Ctrl+Alt+Shift with a letter by default.'},
+  {section: 'App', key: 'edit_shortcuts', type: 'button', label: 'Edit shortcuts', when: () => !!window.__scApp?.capabilities?.hotkeys, action: () => openPanel('shortcuts')},
   {section: 'App', key: 'remote', label: 'Phone remote', hint: 'Control GoLow from a phone on the same Wi-Fi.'},
   {section: 'App', key: 'show_remote', type: 'button', label: 'Connect a phone', action: () => openPanel('remote')},
-  {section: 'App', key: 'updates', label: 'Check for updates'},
-  {section: 'App', key: 'check_updates', type: 'button', label: 'Check now', action: checkForUpdate},
+  {section: 'App', key: 'updates', label: 'Check for updates', when: () => !!window.__scApp?.capabilities?.updates},
+  {section: 'App', key: 'check_updates', type: 'button', label: 'Check now', when: () => !!window.__scApp?.capabilities?.updates, action: checkForUpdate},
   {section: 'App', key: 'accounts', type: 'button', label: 'Accounts', action: () => openPanel('accounts')},
-  {section: 'App', key: 'gpu', label: 'Hardware acceleration', hint: 'Turn off if video or animations flicker. Takes effect after a restart.'},
+  {section: 'App', key: 'gpu', label: 'Hardware acceleration', when: () => !!window.__scApp?.capabilities?.gpu, hint: 'Turn off if video or animations flicker. Takes effect after a restart.'},
   {section: 'App', key: 'reset_zoom', type: 'button', label: 'Reset zoom (Ctrl+0)', action: () => call('zoom', {factor: 1}).catch(() => {})},
 );
 css.push(() => pref('reduce_motion') ? 'html:root *,html:root *::before,html:root *::after{animation-duration:0s!important;transition:none!important;scroll-behavior:auto!important}' : '');
@@ -103,7 +103,7 @@ tabs.push({id: 'remote', label: 'Remote', order: 10, aside: true, render(body) {
     box.replaceChildren(h('p', {text: 'Scan with your phone\'s camera, or open this address on it:'}),
       h('div', {style: 'display:grid;place-items:center;padding:8px'}, qrCode(info)),
       h('p', {cls: 'clip', text: info.url, title: info.url}),
-      h('p', {text: 'Windows may ask whether GoLow can use private networks: allow it for the remote to work. Anyone with this address on your network can control playback, so treat it like a password.'}));
+      h('p', {text: 'Your computer may ask whether GoLow can use private networks: allow it for the remote to work. Anyone with this address on your network can control playback, so treat it like a password.'}));
   }, error => box.replaceChildren(h('p', {text: error.message})));
 }});
 // The phone shows what plays. The page tells the app on changes, not every second.

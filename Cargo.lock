@@ -829,6 +829,7 @@ dependencies = [
  "dirs",
  "embed-resource",
  "image",
+ "objc2",
  "qrcode",
  "serde",
  "serde_json",

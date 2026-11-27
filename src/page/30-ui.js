@@ -65,7 +65,7 @@ menu.push(
   {section: 'Interface', key: 'comments', label: 'Waveform comments'},
   {section: 'Interface', key: 'top_comments', label: 'Top comments first'},
   {section: 'Playback', key: 'autoplay', label: 'Autoplay related tracks'},
-  {section: 'Sharing', key: 'discord', label: 'Discord status'},
+  {section: 'Sharing', key: 'discord', label: 'Discord status', when: () => !!window.__scApp?.capabilities?.discord},
   {section: 'Sharing', key: 'lastfm', label: 'Scrobble to Last.fm', when: () => !!window.__scLastfm},
 );
 function control(item) {
@@ -104,7 +104,7 @@ function place() {
       #panel{position:absolute;top:calc(100% + 6px);right:0;width:280px;max-height:calc(100vh - 120px);overflow:auto;padding:6px}`);
     shadow.append(iconButton('gear', 'GoLow settings', () => openSettings(!panel || panel.hidden), {id: 'open', 'aria-expanded': 'false'}),
       iconButton('expand', 'Exit mini player', () => change('compact', false), {id: 'expand'}));
-    $('open').title = 'GoLow settings (Ctrl+,)';
+    $('open').title = 'GoLow settings (Ctrl/Cmd+,)';
   }
   if (!placer) {
     // SoundCloud renders its header after load and swaps it out once more. The callback is
@@ -258,8 +258,8 @@ function toast(text, action, ms = 6000) {
 
 document.addEventListener('keydown', event => {
   const typing = event.composedPath().some(node => node instanceof HTMLElement && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName)));
-  if (event.ctrlKey && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
-  if (event.ctrlKey && event.key === '.') { event.preventDefault(); drawer && !drawer.hidden ? closePanel() : openPanel(); }
+  if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
+  if ((event.ctrlKey || event.metaKey) && event.key === '.') { event.preventDefault(); drawer && !drawer.hidden ? closePanel() : openPanel(); }
   if (event.key === 'Escape') {
     if (openMenu) closeMenu();
     else if (panel && !panel.hidden) { openSettings(false); $('open').focus(); }
