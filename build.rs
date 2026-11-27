@@ -31,6 +31,12 @@ fn main() {
     script += "})();\n";
     fs::write(out.join("client.js"), script).expect("write page script");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        embed_windows_resources(&manifest, &out);
+    }
+}
+
+fn embed_windows_resources(manifest: &std::path::Path, out: &std::path::Path) {
     let icon = manifest.join("assets").join("icon.ico");
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let exe = format!("{}.exe", env::var("CARGO_PKG_NAME").unwrap());

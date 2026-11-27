@@ -52,6 +52,7 @@ function watchPlayer() {
   }
   emit('tick');
   report();
+  publishMediaSession();
   if (!settings.autoplay) document.querySelector('.queueFallback__toggle .sc-toggle-on input')?.click();
 }
 // Tells the app what is playing: the window title, the tray, Discord and Last.fm. Inside a mix
@@ -66,6 +67,49 @@ function report() {
   if (message.now === reported) return;
   reported = message.now;
   send(message);
+}
+// System media controls use the page's media session; macOS routes it through WebKit's
+// Now Playing integration. Explicit play and pause preserve state instead of blindly toggling it.
+try {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.setActionHandler('play', () => { if (!player.playing) commands.toggle(); });
+    navigator.mediaSession.setActionHandler('pause', () => { if (player.playing) commands.toggle(); });
+    navigator.mediaSession.setActionHandler('nexttrack', () => commands.next());
+    navigator.mediaSession.setActionHandler('previoustrack', () => commands.previous());
+    navigator.mediaSession.setActionHandler('seekto', event => { if (event.seekTime != null) seekTo(event.seekTime); });
+    navigator.mediaSession.setActionHandler('seekbackward', event => commands.back(event.seekOffset || pref('skip_back')));
+    navigator.mediaSession.setActionHandler('seekforward', event => commands.forward(event.seekOffset || pref('skip_forward')));
+  }
+} catch {}
+let mediaSig;
+function publishMediaSession() {
+  const art = (tracks.get(player.path)?.artwork || '').replace(/-(large|t\d+x\d+)\./, '-t500x500.');
+  const rate = media.el?.playbackRate || 1;
+  const chapter = player.chapter;
+  const title = chapter?.title || player.title;
+  const artist = chapter?.artist || player.artist;
+  if (!('mediaSession' in navigator)) return;
+  try {
+    if (!player.title) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+      mediaSig = null;
+      return;
+    }
+    const sig = JSON.stringify([title, artist, art]);
+    if (sig !== mediaSig && typeof MediaMetadata !== 'undefined') {
+      mediaSig = sig;
+      // In a mix the system display follows the current chapter, while position remains the
+      // position in the whole mix so system seeks still land in the right place.
+      navigator.mediaSession.metadata = new MediaMetadata({title, artist, album: 'SoundCloud',
+        artwork: art ? [{src: art, sizes: '500x500', type: 'image/jpeg'}] : []});
+    }
+    navigator.mediaSession.playbackState = player.playing ? 'playing' : 'paused';
+    if (navigator.mediaSession.setPositionState && player.total > 0) {
+      navigator.mediaSession.setPositionState({duration: player.total, playbackRate: rate,
+        position: Math.min(position(), player.total)});
+    }
+  } catch {}
 }
 on('track', () => autoplayOff());
 
@@ -110,6 +154,7 @@ function applyRate(el = media.el) {
   el.preservesPitch = true;
   const button = barButton('speed');
   if (button) button.textContent = want === 1 ? '1×' : `${want}×`;
+  publishMediaSession();
 }
 function setSpeed(rate, everywhere = false) {
   if (everywhere) { local.speed = rate; store('prefs', local); }
@@ -237,6 +282,8 @@ on('tick', () => {
 
 const commands = {
   toggle: () => document.querySelector('.playControls__play')?.click(),
+  play: () => { if (!player.playing) commands.toggle(); },
+  pause: () => { if (player.playing) commands.toggle(); },
   next: () => document.querySelector('.skipControl__next')?.click(),
   previous: () => document.querySelector('.skipControl__previous')?.click(),
   back: () => skip(-pref('skip_back')),

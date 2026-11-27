@@ -32,21 +32,23 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(windows)]
+use tao::platform::windows::{EventLoopBuilderExtWindows, WindowExtWindows};
 use tao::{
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
-    platform::windows::{EventLoopBuilderExtWindows, WindowExtWindows},
     window::{Icon, Window, WindowBuilder, WindowId},
 };
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
-use wry::{
-    MemoryUsageLevel, NewWindowResponse, PageLoadEvent, WebContext, WebView, WebViewBuilder,
-    WebViewBuilderExtWindows, WebViewExtWindows,
-};
+#[cfg(target_os = "macos")]
+use wry::WebViewBuilderExtMacos;
+#[cfg(windows)]
+use wry::{MemoryUsageLevel, WebViewBuilderExtWindows, WebViewExtWindows};
+use wry::{NewWindowResponse, PageLoadEvent, WebContext, WebView, WebViewBuilder};
 
 pub const APP_NAME: &str = env!("APP_NAME");
 const SAVE_DELAY: Duration = Duration::from_millis(350);
@@ -62,6 +64,7 @@ enum Action {
     Command(&'static str, Value),
     Hotkey(usize),
     TaskbarReady,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Zoom(f64),
     Update(update::Release),
     Installed(PathBuf),
@@ -101,6 +104,7 @@ fn args() -> Args {
     Args { profile, after, background }
 }
 
+#[cfg(windows)]
 fn wait_for(pid: u32) {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
@@ -112,6 +116,23 @@ fn wait_for(pid: u32) {
             WaitForSingleObject(handle, 10_000);
             CloseHandle(handle);
         }
+    }
+}
+
+#[cfg(not(windows))]
+fn wait_for(pid: u32) {
+    // Used when one copy replaces another. Poll the process for at most ten seconds.
+    for _ in 0..100 {
+        let alive = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        if !alive {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -137,8 +158,14 @@ fn log(dir: &Path, started: Instant, message: &str) {
 }
 
 fn set_background(view: &WebView, hidden: bool, efficiency: bool) {
-    let level = if hidden && efficiency { MemoryUsageLevel::Low } else { MemoryUsageLevel::Normal };
-    let _ = view.set_memory_usage_level(level);
+    #[cfg(windows)]
+    {
+        let level =
+            if hidden && efficiency { MemoryUsageLevel::Low } else { MemoryUsageLevel::Normal };
+        let _ = view.set_memory_usage_level(level);
+    }
+    #[cfg(not(windows))]
+    let _ = efficiency;
     let _ = view.set_visible(!hidden);
 }
 
@@ -196,9 +223,59 @@ fn tray(rgba: &[u8], w: u32, h: u32, tooltip: &str) -> Option<TrayIcon> {
     TrayIconBuilder::new()
         .with_icon(tray_icon::Icon::from_rgba(rgba.to_vec(), w, h).ok()?)
         .with_tooltip(tooltip)
+        .with_menu_on_left_click(false)
         .with_menu(Box::new(menu))
         .build()
         .ok()
+}
+
+/// WKWebView receives standard edit shortcuts through the application menu.
+#[cfg(target_os = "macos")]
+fn app_menu() -> Menu {
+    use tray_icon::menu::accelerator::Accelerator;
+    let menu = Menu::new();
+    let app = Submenu::new(APP_NAME, true);
+    let quit = MenuItem::with_id(
+        "quit",
+        format!("Quit {APP_NAME}"),
+        true,
+        "CmdOrCtrl+Q".parse::<Accelerator>().ok(),
+    );
+    let _ = app.append_items(&[
+        &PredefinedMenuItem::hide(None),
+        &PredefinedMenuItem::hide_others(None),
+        &PredefinedMenuItem::separator(),
+        &quit,
+    ]);
+    let edit = Submenu::new("Edit", true);
+    let _ = edit.append_items(&[
+        &PredefinedMenuItem::undo(None),
+        &PredefinedMenuItem::redo(None),
+        &PredefinedMenuItem::separator(),
+        &PredefinedMenuItem::cut(None),
+        &PredefinedMenuItem::copy(None),
+        &PredefinedMenuItem::paste(None),
+        &PredefinedMenuItem::select_all(None),
+    ]);
+    let playback = Submenu::new("Playback", true);
+    let playback_item = |id: &'static str, text: &'static str| MenuItem::with_id(id, text, true, None);
+    let (play, previous, next, back, forward) = (
+        playback_item("play", "Play or Pause"),
+        playback_item("previous", "Previous Track"),
+        playback_item("next", "Next Track"),
+        playback_item("back", "Skip Back"),
+        playback_item("forward", "Skip Forward"),
+    );
+    let _ = playback.append_items(&[&play, &previous, &next, &PredefinedMenuItem::separator(), &back, &forward]);
+    let window = Submenu::new("Window", true);
+    let _ = window.append_items(&[
+        &PredefinedMenuItem::minimize(None),
+        &PredefinedMenuItem::close_window(None),
+    ]);
+    let _ = menu.append_items(&[&app, &edit, &playback, &window]);
+    menu.init_for_nsapp();
+    window.set_as_windows_menu_for_nsapp();
+    menu
 }
 
 /// Settles a page request: `window.__scClient.reply(id, value, error)`.
@@ -240,12 +317,29 @@ fn init_script(
     profile: &str,
     launched: u64,
 ) -> Result<String, serde_json::Error> {
+    let hotkey_map = if cfg!(any(windows, target_os = "macos")) {
+        hotkeys::ACTIONS
+            .iter()
+            .map(|(action, keys)| (action.to_string(), json!(keys)))
+            .collect::<serde_json::Map<_, _>>()
+    } else {
+        serde_json::Map::new()
+    };
     let app = json!({
         "version": env!("CARGO_PKG_VERSION"),
         "started": launched,
         "profile": profile,
+        "platform": if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "other" },
+        "capabilities": {
+            "autostart": cfg!(any(windows, target_os = "macos")),
+            "discord": cfg!(any(windows, unix)),
+            "gpu": cfg!(windows),
+            "hotkeys": cfg!(any(windows, target_os = "macos")),
+            "notifications": cfg!(any(windows, target_os = "macos")),
+            "updates": cfg!(any(windows, target_os = "macos")),
+        },
         "lastfm": lastfm::KEY.is_some(),
-        "hotkeys": hotkeys::ACTIONS.iter().map(|(action, keys)| (action.to_string(), json!(keys))).collect::<serde_json::Map<_, _>>(),
+        "hotkeys": hotkey_map,
     });
     Ok(format!(
         "window.__scInitialSettings={};window.__scLastfm={};window.__scApp={app};\n{}",
@@ -272,21 +366,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(dir.join("startup.log"), format!("{APP_NAME} {}\n", env!("CARGO_PKG_VERSION")))?;
     let mut prefs: Settings = read_json(&dir.join("settings.json")).unwrap_or_default();
     // A second launch posts show_message to this window; the hook turns it into an action.
+    #[cfg(windows)]
     let (show_message, hook_proxy) = (instance::show_message(), Rc::new(RefCell::new(None)));
+    #[cfg(windows)]
     let hook_target: Rc<RefCell<Option<EventLoopProxy<Action>>>> = hook_proxy.clone();
-    let event_loop = EventLoopBuilder::<Action>::with_user_event()
-        .with_msg_hook(move |msg| {
-            let msg = unsafe { &*msg.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>() };
-            let ours = msg.message == show_message;
-            if let (true, Some(proxy)) = (ours, hook_target.borrow().as_ref()) {
-                let _ = proxy.send_event(Action::Show);
-            }
-            ours
-        })
-        .build();
+    let mut event_loop = EventLoopBuilder::<Action>::with_user_event();
+    #[cfg(windows)]
+    event_loop.with_msg_hook(move |msg| {
+        let msg = unsafe { &*msg.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>() };
+        let ours = msg.message == show_message;
+        if let (true, Some(proxy)) = (ours, hook_target.borrow().as_ref()) {
+            let _ = proxy.send_event(Action::Show);
+        }
+        ours
+    });
+    let event_loop = event_loop.build();
     let target = (*event_loop).clone();
     let proxy = event_loop.create_proxy();
-    *hook_proxy.borrow_mut() = Some(proxy.clone());
+    #[cfg(windows)]
+    {
+        *hook_proxy.borrow_mut() = Some(proxy.clone());
+    }
+    #[cfg(unix)]
+    instance.listen(proxy.clone())?;
     let tray_proxy = Mutex::new(proxy.clone());
     TrayIconEvent::set_event_handler(Some(move |event| {
         if let TrayIconEvent::Click {
@@ -298,11 +400,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = tray_proxy.lock().unwrap().send_event(Action::Show);
         }
     }));
+    let hotkey_proxy = proxy.clone();
+    hotkeys::listen(move |id| {
+        let _ = hotkey_proxy.send_event(Action::Hotkey(id));
+    });
     let menu_proxy = Mutex::new(proxy.clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let action = match event.id.0.as_str() {
             "play" => Action::PlayPause,
             "next" => Action::Command("next", Value::Null),
+            "previous" => Action::Command("previous", Value::Null),
+            "back" => Action::Command("back", Value::Null),
+            "forward" => Action::Command("forward", Value::Null),
             "quit" => Action::Quit,
             id => match id.strip_prefix("sleep:").and_then(|minutes| minutes.parse::<i32>().ok()) {
                 Some(minutes) => Action::Command("sleep", json!(minutes)),
@@ -338,7 +447,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_window_icon(Icon::from_rgba(icon.to_vec(), w, h).ok())
         .with_visible(!background)
         .build(&event_loop)?;
+    #[cfg(windows)]
     instance.mark(window.hwnd());
+    #[cfg(windows)]
+    let hwnd = window.hwnd();
+    #[cfg(not(windows))]
+    let hwnd = 0;
+    #[cfg(target_os = "macos")]
+    let _menu = app_menu();
     log(&dir, started, "window_built");
     let mut normal_size = window.inner_size();
     let position = window.outer_position().unwrap_or(PhysicalPosition::new(100, 100));
@@ -354,7 +470,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Hotkeys, taskbar buttons and the taskbar-ready notice arrive as window messages.
     let native_proxy = proxy.clone();
-    native::subclass(window.hwnd(), move |message| {
+    native::subclass(hwnd, move |message| {
         let _ = native_proxy.send_event(match message {
             native::Native::Hotkey(id) => Action::Hotkey(id),
             native::Native::Thumb(taskbar::PREVIOUS) => Action::Command("previous", Value::Null),
@@ -363,10 +479,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             native::Native::TaskbarReady => Action::TaskbarReady,
         });
     });
-    let mut hotkeys = hotkeys::Hotkeys::new(window.hwnd());
+    let mut hotkeys = hotkeys::Hotkeys::new(hwnd);
     let mut hotkey_status = json!(hotkeys.apply(prefs.hotkeys, &prefs.shortcuts));
     // Fails until Windows announces the taskbar button; TaskbarReady retries then.
-    let mut thumbs = taskbar::Taskbar::add(window.hwnd(), false).ok();
+    let mut thumbs = taskbar::Taskbar::add(hwnd, false).ok();
     log(
         &dir,
         started,
@@ -395,16 +511,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Links the page opens in a new window go to the browser, at most one a second.
     let last_external = Cell::new(Instant::now() - Duration::from_secs(5));
     // Hardware acceleration off is for machines where the GPU path misbehaves.
+    #[cfg(windows)]
     let browser_args = if prefs.gpu { "" } else { "--disable-gpu" };
-    let view = WebViewBuilder::new_with_web_context(&mut context)
+    let view_builder = WebViewBuilder::new_with_web_context(&mut context)
         .with_initialization_script(&script)
         .with_background_color((11, 11, 12, 255))
         .with_devtools(cfg!(debug_assertions))
         // Ctrl+wheel, Ctrl+plus, Ctrl+minus and Ctrl+0 zoom the page.
         .with_hotkeys_zoom(true)
-        // Explicit arguments avoid Wry's default SmartScreen-disabling flag.
-        // Standard Chromium background throttling stays enabled.
-        .with_additional_browser_args(browser_args)
         .with_navigation_handler(|url| policy::navigation_allowed(&url))
         .with_ipc_handler(move |request| {
             // Requests can carry data such as a library backup; settings and now-playing are small.
@@ -442,9 +556,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return NewWindowResponse::Deny;
             };
             let (id, close_proxy) = (window.id(), popup_proxy.clone());
-            let Ok(view) = WebViewBuilder::new()
-                .with_environment(features.opener.environment)
-                .with_additional_browser_args("")
+            let popup_builder = WebViewBuilder::new()
                 .with_devtools(cfg!(debug_assertions))
                 .with_navigation_handler(|url| policy::navigation_allowed(&url))
                 .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
@@ -455,12 +567,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         let _ = close_proxy.send_event(Action::ClosePopup(id));
                     }
-                })
-                .build(&window)
-            else {
+                });
+            #[cfg(windows)]
+            let popup_builder = popup_builder
+                .with_environment(features.opener.environment)
+                .with_additional_browser_args("");
+            #[cfg(target_os = "macos")]
+            let popup_builder =
+                popup_builder.with_webview_configuration(features.opener.target_configuration);
+            let Ok(view) = popup_builder.build(&window) else {
                 return NewWindowResponse::Deny;
             };
+            #[cfg(windows)]
             let webview = view.webview();
+            #[cfg(target_os = "macos")]
+            let webview = objc2::rc::Retained::into_super(wry::WebViewExtMacOS::webview(&view));
             popup_store.borrow_mut().push(Popup { _view: view, window });
             NewWindowResponse::Create { webview }
         })
@@ -470,8 +591,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = load_proxy.send_event(Action::PageLoaded);
             }
             log(&log_dir, started, if finished { "page_finished" } else { "page_started" });
-        })
-        .build(&window)?;
+        });
+    // Explicit arguments avoid Wry's default SmartScreen-disabling flag.
+    // Standard Chromium background throttling stays enabled.
+    #[cfg(windows)]
+    let builder = view_builder.with_additional_browser_args(browser_args);
+    #[cfg(not(windows))]
+    let builder = view_builder;
+    let view = builder.build(&window)?;
     log(&dir, started, "webview_built");
     let rules =
         |prefs: &Settings| filter::Rules { cleanup: prefs.cleanup, efficiency: prefs.efficiency };
@@ -483,19 +610,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if (0.25..=5.0).contains(&win_state.zoom) && win_state.zoom != 1.0 {
         let _ = view.zoom(win_state.zoom);
     }
-    let zoom_proxy = proxy.clone();
-    let on_zoom =
-        webview2_com::ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
-            if let Some(controller) = controller {
-                let mut factor = 1.0;
-                unsafe { controller.ZoomFactor(&mut factor)? };
-                let _ = zoom_proxy.send_event(Action::Zoom(factor));
-            }
-            Ok(())
-        }));
-    let mut token = 0;
-    // Raised for the user's own zooming; zoom the app sets is saved where it is set.
-    let _ = unsafe { view.controller().add_ZoomFactorChanged(&on_zoom, &mut token) };
+    #[cfg(windows)]
+    {
+        let zoom_proxy = proxy.clone();
+        let on_zoom =
+            webview2_com::ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+                if let Some(controller) = controller {
+                    let mut factor = 1.0;
+                    unsafe { controller.ZoomFactor(&mut factor)? };
+                    let _ = zoom_proxy.send_event(Action::Zoom(factor));
+                }
+                Ok(())
+            }));
+        let mut token = 0;
+        // Raised for the user's own zooming; zoom the app sets is saved where it is set.
+        let _ = unsafe { view.controller().add_ZoomFactorChanged(&on_zoom, &mut token) };
+    }
     // The chosen start page, or the page open at the last exit.
     let last = saved.map(|state| state.last).filter(|path| {
         path.starts_with('/') && policy::soundcloud_page(&format!("https://soundcloud.com{path}"))
@@ -583,7 +713,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => {}
             },
             Event::UserEvent(Action::TaskbarReady) => {
-                thumbs = taskbar::Taskbar::add(window.hwnd(), now_playing.is_some()).ok();
+                thumbs = taskbar::Taskbar::add(hwnd, now_playing.is_some()).ok();
                 log(
                     &dir,
                     started,

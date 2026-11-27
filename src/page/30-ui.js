@@ -39,6 +39,7 @@ const icons = {
   moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
   panel: 'M4 6h16M4 12h10M4 18h13',
   close: 'M6 6l12 12M18 6L6 18',
+  plus: 'M12 5v14M5 12h14',
   block: 'M5.6 5.6l12.8 12.8|c12 12 9',
 };
 function icon(name, size = 20) {
@@ -65,7 +66,7 @@ menu.push(
   {section: 'Interface', key: 'comments', label: 'Waveform comments'},
   {section: 'Interface', key: 'top_comments', label: 'Top comments first'},
   {section: 'Playback', key: 'autoplay', label: 'Autoplay related tracks'},
-  {section: 'Sharing', key: 'discord', label: 'Discord status'},
+  {section: 'Sharing', key: 'discord', label: 'Discord status', when: () => !!window.__scApp?.capabilities?.discord},
   {section: 'Sharing', key: 'lastfm', label: 'Scrobble to Last.fm', when: () => !!window.__scLastfm},
 );
 function control(item) {
@@ -85,8 +86,24 @@ function control(item) {
     onchange: event => change(item.key, event.target.checked)}));
 }
 function buildSettings() {
+  const search = h('input', {id: 'settings-search', type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings'});
+  search.addEventListener('input', () => {
+    const needle = search.value.trim().toLowerCase();
+    for (const row of panel.querySelectorAll('.row')) {
+      if (row.contains(search)) continue;
+      row.hidden = !!needle && !row.textContent.toLowerCase().includes(needle);
+    }
+    for (const heading of panel.querySelectorAll('h3')) {
+      let visible = false, node = heading.nextElementSibling;
+      while (node && node.tagName !== 'H3') {
+        if ((node.classList?.contains('row') || node.tagName === 'LABEL' || node.tagName === 'A') && !node.hidden) visible = true;
+        node = node.nextElementSibling;
+      }
+      heading.hidden = !!needle && !visible;
+    }
+  });
   panel = h('section', {id: 'panel', cls: 'card', role: 'dialog', 'aria-label': 'GoLow settings', hidden: true},
-    h('h2', {text: 'GoLow'}),
+    h('h2', {text: 'GoLow'}), search,
     SECTIONS.map(section => {
       const items = menu.filter(item => item.section === section && (!item.when || item.when()));
       return items.length ? [h('h3', {text: section}), items.map(control)] : null;
@@ -104,7 +121,7 @@ function place() {
       #panel{position:absolute;top:calc(100% + 6px);right:0;width:280px;max-height:calc(100vh - 120px);overflow:auto;padding:6px}`);
     shadow.append(iconButton('gear', 'GoLow settings', () => openSettings(!panel || panel.hidden), {id: 'open', 'aria-expanded': 'false'}),
       iconButton('expand', 'Exit mini player', () => change('compact', false), {id: 'expand'}));
-    $('open').title = 'GoLow settings (Ctrl+,)';
+    $('open').title = 'GoLow settings (Ctrl/Cmd+,)';
   }
   if (!placer) {
     // SoundCloud renders its header after load and swaps it out once more. The callback is
@@ -258,8 +275,8 @@ function toast(text, action, ms = 6000) {
 
 document.addEventListener('keydown', event => {
   const typing = event.composedPath().some(node => node instanceof HTMLElement && (node.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName)));
-  if (event.ctrlKey && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
-  if (event.ctrlKey && event.key === '.') { event.preventDefault(); drawer && !drawer.hidden ? closePanel() : openPanel(); }
+  if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings(!panel || panel.hidden); }
+  if ((event.ctrlKey || event.metaKey) && event.key === '.') { event.preventDefault(); drawer && !drawer.hidden ? closePanel() : openPanel(); }
   if (event.key === 'Escape') {
     if (openMenu) closeMenu();
     else if (panel && !panel.hidden) { openSettings(false); $('open').focus(); }
