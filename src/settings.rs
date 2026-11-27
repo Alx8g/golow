@@ -32,13 +32,13 @@ pub struct Settings {
     pub now_file: bool,
     /// The phone remote on the local network.
     pub remote: bool,
-    /// Windows notifications for new releases from artists you follow.
+    /// Native notifications for new releases from artists you follow.
     pub notify: bool,
     /// Checks GitHub for a newer GoLow once a day.
     pub updates: bool,
-    /// Starts hidden in the tray at Windows sign-in, so opening GoLow is instant.
+    /// Starts hidden at sign-in, so opening GoLow is instant.
     pub background: bool,
-    /// Closing the window keeps GoLow running in the tray instead of quitting.
+    /// Closing the window keeps GoLow running instead of quitting.
     pub tray: bool,
 }
 

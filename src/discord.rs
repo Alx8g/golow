@@ -136,7 +136,173 @@ mod imp {
 #[cfg(windows)]
 pub use imp::*;
 
-#[cfg(not(windows))]
+#[cfg(all(unix, not(windows)))]
+mod imp {
+    //! Discord rich presence over Discord's Unix-domain IPC socket.
+    use serde_json::{json, Value};
+    use std::{
+        env, io,
+        io::{Read, Write},
+        os::unix::net::UnixStream,
+        path::PathBuf,
+        sync::mpsc::{channel, Sender},
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
+    /// Application IDs are public. Forks can build with their own via GOLOW_DISCORD_APP_ID.
+    pub const APP_ID: &str = match option_env!("GOLOW_DISCORD_APP_ID") {
+        Some(id) => id,
+        None => "1556798456515928084",
+    };
+
+    fn frame(op: u32, body: &Value) -> Vec<u8> {
+        let body = body.to_string();
+        [op.to_le_bytes(), (body.len() as u32).to_le_bytes()]
+            .concat()
+            .into_iter()
+            .chain(body.bytes())
+            .collect()
+    }
+
+    /// Reads one reply frame: (opcode, JSON body).
+    fn reply(pipe: &mut UnixStream) -> io::Result<(u32, Value)> {
+        let mut header = [0; 8];
+        pipe.read_exact(&mut header)?;
+        let mut body =
+            vec![0; u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize];
+        pipe.read_exact(&mut body)?;
+        Ok((
+            u32::from_le_bytes([header[0], header[1], header[2], header[3]]),
+            serde_json::from_slice(&body)?,
+        ))
+    }
+
+    /// Discord documents these prefixes in order, but in practice a machine can have more than one
+    /// of them set. Try every prefix rather than trusting only the first environment variable.
+    fn socket_paths() -> Vec<PathBuf> {
+        let mut dirs = Vec::<PathBuf>::new();
+        for key in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
+            if let Some(dir) = env::var_os(key).filter(|dir| !dir.is_empty()) {
+                let dir = PathBuf::from(dir);
+                if !dirs.contains(&dir) {
+                    dirs.push(dir);
+                }
+            }
+        }
+        let fallback = PathBuf::from("/tmp");
+        if !dirs.contains(&fallback) {
+            dirs.push(fallback);
+        }
+        dirs.into_iter()
+            .flat_map(|dir| (0..10).map(move |n| dir.join(format!("discord-ipc-{n}"))))
+            .collect()
+    }
+
+    /// Handshakes on the first live socket. Discord answers a valid ID with op 1 (READY)
+    /// and anything else with op 2 (CLOSE) and an error message.
+    pub fn connect(app_id: &str) -> io::Result<UnixStream> {
+        let mut last = io::Error::new(io::ErrorKind::NotFound, "Discord is not running");
+        for path in socket_paths() {
+            let Ok(mut pipe) = UnixStream::connect(path) else {
+                continue;
+            };
+            pipe.set_read_timeout(Some(Duration::from_secs(2)))?;
+            pipe.set_write_timeout(Some(Duration::from_secs(2)))?;
+            pipe.write_all(&frame(0, &json!({"v": 1, "client_id": app_id})))?;
+            match reply(&mut pipe)? {
+                (1, _) => return Ok(pipe),
+                (_, error) => last = io::Error::other(error.to_string()),
+            }
+        }
+        Err(last)
+    }
+
+    /// Sets or clears the status and returns Discord's reply.
+    fn set_activity(pipe: &mut UnixStream, now: Option<&str>, nonce: usize) -> io::Result<Value> {
+        let started = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let activity = now.map_or(
+            Value::Null,
+            |title| json!({"type": 2, "details": title, "timestamps": {"start": started}}),
+        );
+        let args = json!({"pid": std::process::id(), "activity": activity});
+        pipe.write_all(&frame(
+            1,
+            &json!({"cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string()}),
+        ))?;
+        let (_, body) = reply(pipe)?;
+        match body["evt"].as_str() {
+            Some("ERROR") => Err(io::Error::other(body["data"].to_string())),
+            _ => Ok(body),
+        }
+    }
+
+    /// Mirrors now-playing to Discord on a worker thread; send `None` to clear the status.
+    pub fn start(app_id: &'static str) -> Sender<Option<String>> {
+        let (sender, updates) = channel::<Option<String>>();
+        thread::spawn(move || {
+            let mut pipe = None;
+            for (nonce, now) in updates.into_iter().enumerate() {
+                if pipe.is_none() {
+                    pipe = connect(app_id).ok();
+                }
+                // A failure means Discord restarted or quit; reconnect on the next update.
+                if pipe
+                    .as_mut()
+                    .is_some_and(|open| set_activity(open, now.as_deref(), nonce).is_err())
+                {
+                    pipe = None;
+                }
+            }
+        });
+        sender
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn frames_are_opcode_length_then_json() {
+            let bytes = frame(1, &json!({"a": 1}));
+            assert_eq!(&bytes[..8], &[1, 0, 0, 0, 7, 0, 0, 0]);
+            assert_eq!(&bytes[8..], br#"{"a":1}"#);
+        }
+
+        #[test]
+        fn every_discord_instance_and_prefix_is_tried() {
+            let paths = socket_paths();
+            assert!(paths.iter().any(|path| path.ends_with("discord-ipc-0")));
+            assert!(paths.iter().any(|path| path.ends_with("discord-ipc-9")));
+        }
+
+        /// Needs Discord running locally: `cargo test -- --ignored discord`.
+        #[test]
+        #[ignore]
+        fn discord_rejects_an_unknown_application_over_the_real_socket() {
+            let error = connect("1").expect_err("an unregistered ID must be refused");
+            assert!(
+                error.to_string().contains("client_id") || error.to_string().contains("Invalid"),
+                "{error}"
+            );
+        }
+
+        /// Needs Discord running locally. Shows a test status for a moment, then clears it.
+        #[test]
+        #[ignore]
+        fn discord_accepts_golow_and_shows_a_listening_status() {
+            let mut pipe = connect(APP_ID).expect("GoLow's application is accepted");
+            let shown =
+                set_activity(&mut pipe, Some("GoLow test - please ignore"), 0).expect("status set");
+            assert_eq!(shown["data"]["type"], 2, "{shown}");
+            set_activity(&mut pipe, None, 1).expect("status cleared");
+        }
+    }
+}
+#[cfg(all(unix, not(windows)))]
+pub use imp::*;
+
+#[cfg(not(any(windows, unix)))]
 mod imp {
     #![allow(dead_code)]
 
@@ -149,5 +315,5 @@ mod imp {
         channel().0
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 pub use imp::*;

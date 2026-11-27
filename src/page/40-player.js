@@ -68,8 +68,8 @@ function report() {
   reported = message.now;
   send(message);
 }
-// System media controls (macOS Control Center, the notch and media keys) use the page's own
-// media session. Explicit play and pause preserve state instead of blindly toggling it.
+// System media controls use the page's media session; macOS routes it through WebKit's
+// Now Playing integration. Explicit play and pause preserve state instead of blindly toggling it.
 try {
   if ('mediaSession' in navigator) {
     navigator.mediaSession.setActionHandler('play', () => { if (!player.playing) commands.toggle(); });
@@ -81,6 +81,11 @@ try {
 } catch {}
 let mediaSig;
 function publishMediaSession() {
+  const art = (tracks.get(player.path)?.artwork || '').replace(/-(large|t\d+x\d+)\./, '-t500x500.');
+  const rate = media.el?.playbackRate || 1;
+  const chapter = player.chapter;
+  const title = chapter?.title || player.title;
+  const artist = chapter?.artist || player.artist;
   if (!('mediaSession' in navigator)) return;
   try {
     if (!player.title) {
@@ -89,16 +94,17 @@ function publishMediaSession() {
       mediaSig = null;
       return;
     }
-    const art = (tracks.get(player.path)?.artwork || '').replace(/-(large|t\d+x\d+)\./, '-t500x500.');
-    const sig = JSON.stringify([player.title, player.artist, art]);
+    const sig = JSON.stringify([title, artist, art]);
     if (sig !== mediaSig && typeof MediaMetadata !== 'undefined') {
       mediaSig = sig;
-      navigator.mediaSession.metadata = new MediaMetadata({title: player.title, artist: player.artist, album: 'SoundCloud',
+      // In a mix the system display follows the current chapter, while position remains the
+      // position in the whole mix so system seeks still land in the right place.
+      navigator.mediaSession.metadata = new MediaMetadata({title, artist, album: 'SoundCloud',
         artwork: art ? [{src: art, sizes: '500x500', type: 'image/jpeg'}] : []});
     }
     navigator.mediaSession.playbackState = player.playing ? 'playing' : 'paused';
     if (navigator.mediaSession.setPositionState && player.total > 0) {
-      navigator.mediaSession.setPositionState({duration: player.total, playbackRate: media.el?.playbackRate || 1,
+      navigator.mediaSession.setPositionState({duration: player.total, playbackRate: rate,
         position: Math.min(position(), player.total)});
     }
   } catch {}
@@ -146,6 +152,7 @@ function applyRate(el = media.el) {
   el.preservesPitch = true;
   const button = barButton('speed');
   if (button) button.textContent = want === 1 ? '1×' : `${want}×`;
+  publishMediaSession();
 }
 function setSpeed(rate, everywhere = false) {
   if (everywhere) { local.speed = rate; store('prefs', local); }
@@ -273,6 +280,8 @@ on('tick', () => {
 
 const commands = {
   toggle: () => document.querySelector('.playControls__play')?.click(),
+  play: () => { if (!player.playing) commands.toggle(); },
+  pause: () => { if (player.playing) commands.toggle(); },
   next: () => document.querySelector('.skipControl__next')?.click(),
   previous: () => document.querySelector('.skipControl__previous')?.click(),
   back: () => skip(-pref('skip_back')),
