@@ -39,6 +39,7 @@ const icons = {
   moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
   panel: 'M4 6h16M4 12h10M4 18h13',
   close: 'M6 6l12 12M18 6L6 18',
+  plus: 'M12 5v14M5 12h14',
   block: 'M5.6 5.6l12.8 12.8|c12 12 9',
 };
 function icon(name, size = 20) {
@@ -85,8 +86,24 @@ function control(item) {
     onchange: event => change(item.key, event.target.checked)}));
 }
 function buildSettings() {
+  const search = h('input', {id: 'settings-search', type: 'search', placeholder: 'Search settings…', 'aria-label': 'Search settings'});
+  search.addEventListener('input', () => {
+    const needle = search.value.trim().toLowerCase();
+    for (const row of panel.querySelectorAll('.row')) {
+      if (row.contains(search)) continue;
+      row.hidden = !!needle && !row.textContent.toLowerCase().includes(needle);
+    }
+    for (const heading of panel.querySelectorAll('h3')) {
+      let visible = false, node = heading.nextElementSibling;
+      while (node && node.tagName !== 'H3') {
+        if ((node.classList?.contains('row') || node.tagName === 'LABEL' || node.tagName === 'A') && !node.hidden) visible = true;
+        node = node.nextElementSibling;
+      }
+      heading.hidden = !!needle && !visible;
+    }
+  });
   panel = h('section', {id: 'panel', cls: 'card', role: 'dialog', 'aria-label': 'GoLow settings', hidden: true},
-    h('h2', {text: 'GoLow'}),
+    h('h2', {text: 'GoLow'}), search,
     SECTIONS.map(section => {
       const items = menu.filter(item => item.section === section && (!item.when || item.when()));
       return items.length ? [h('h3', {text: section}), items.map(control)] : null;

@@ -45,9 +45,16 @@ tabs.push({id: 'radar', label: 'Radar', order: 6, render(body) {
   const seen = local.radar_seen || 0, since = Date.now() - radarWindow * DAY;
   const shown = radar.filter(item => item.at >= since);
   if (!shown.length) body.append(h('p', {text: 'Nothing new in this period. Reposts are left out: only uploads by the artists themselves show here.'}));
+  if (shown.length) body.append(h('div', {cls: 'row'}, h('button', {cls: 'btn', type: 'button', text: 'Queue all', onclick: async () => {
+    let added = 0;
+    for (const item of shown) if (await queueAdd(item.path, false, true)) added += 1;
+    toast(`Queued ${added} releases.`);
+    openPanel('queue');
+  }})));
   body.append(h('ul', {cls: 'list'}, shown.map(item => h('li', {cls: item.at > seen ? 'current' : ''},
     h('div', {cls: 'grow'}, h('a', {cls: 'clip', href: item.path, text: item.title, style: 'display:block'}),
       h('div', {cls: 'clip dim', text: [item.artist, item.kind === 'playlist' ? `${item.count || ''} tracks` : clock(item.duration / 1000), ago(item.at)].filter(Boolean).join(' · ')})),
+    h('button', {cls: 'btn', type: 'button', text: 'Queue', onclick: () => queueAdd(item.path)}),
     h('button', {cls: 'btn', type: 'button', text: 'Play', onclick: () => playPath(item.path)})))),
     h('button', {cls: 'btn', type: 'button', text: radarBusy ? 'Refreshing…' : 'Refresh', disabled: radarBusy, onclick: refreshRadar}));
   local.radar_seen = Math.max(seen, radar[0]?.at || 0);
